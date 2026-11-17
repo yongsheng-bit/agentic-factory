@@ -171,6 +171,47 @@ def finish(con, ticket_id, status, detail=""):
     return detail
 
 
+RETRYABLE = ("failed", "escalated", "closed")
+RETRY_REFUSED = ("queued", "running", "pr_open", "needs_review", "merged")
+
+
+def retry_ticket(con, ticket_id):
+    """Requeue a finished ticket. Returns (ok, message).
+
+    The guard lives in the UPDATE, not in a read-then-write, so a ticket that a
+    worker claimed between the check and the write cannot be yanked out from
+    under it - that is how two workers end up on one worktree. Attempts are
+    deliberately left alone: the tier router escalates on the attempt count, so
+    resetting it would send a known-hard ticket back to the cheap model.
+    """
+    t = get_ticket(con, ticket_id)
+    if t is None:
+        return False, f"no such ticket {ticket_id}"
+    status = t["status"]
+    if status not in RETRYABLE:
+        if status in RETRY_REFUSED:
+            why = f"{status} is still in flight or already shipped"
+        else:
+            why = f"{status} is not retryable"
+        return False, (f"cannot retry ticket {ticket_id}: {why} "
+                       f"(retryable: {', '.join(RETRYABLE)})")
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("UPDATE tickets SET status='queued', updated_at=?"
+                    " WHERE id=? AND status=?", (time.time(), ticket_id, status))
+        moved = int(con.execute("SELECT changes()").fetchone()[0])
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    if moved != 1:
+        now = get_ticket(con, ticket_id)
+        return False, (f"cannot retry ticket {ticket_id}: status changed to "
+                       f"{now['status'] if now else 'unknown'} under us")
+    return True, (f"requeued ticket {ticket_id} (was {status}, "
+                  f"attempt {t['attempts']} kept)")
+
+
 def attempt_of(con, ticket_id):
     r = con.execute("SELECT attempts FROM tickets WHERE id=?", (ticket_id,)).fetchone()
     return int(r["attempts"]) if r else 0

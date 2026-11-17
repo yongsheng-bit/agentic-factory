@@ -751,6 +751,110 @@ class TestRunsCommand(unittest.TestCase):
                                  r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$", row), row)
 
 
+class TestRetryCommand(unittest.TestCase):
+    """`factory retry <id>` replaces hand-written UPDATE statements.
+
+    Hand-editing the status is how two workers once ended up on the same
+    worktree, so the guard has to live in the same write that does the move,
+    and the attempt count has to survive: the tier router escalates on it, and
+    a retry that forgets it sends a known-hard ticket back to the cheap model.
+    """
+
+    ALLOWED = ("failed", "escalated", "closed")
+    REFUSED = ("queued", "running", "pr_open", "needs_review", "merged")
+
+    def _env(self):
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db}, fh)
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        def run(*argv):
+            buf = io.StringIO()
+            code = 0
+            try:
+                with contextlib.redirect_stdout(buf):
+                    cli.main(["-c", cfg, *argv])
+            except SystemExit as exc:
+                code = exc.code
+            return int(code or 0), buf.getvalue()
+
+        return con, run
+
+    def _ticket(self, con, status, attempts=2):
+        tid = dbmod.add_ticket(con, "hard one", max_retries=3)
+        for _ in range(attempts):
+            dbmod.bump_attempt(con, tid)
+        con.execute("UPDATE tickets SET status=? WHERE id=?", (status, tid))
+        return tid
+
+    def test_finished_statuses_requeue_and_keep_attempts(self):
+        for status in self.ALLOWED:
+            con, run = self._env()
+            tid = self._ticket(con, status)
+            code, out = run("retry", str(tid))
+            self.assertEqual(code, 0, f"{status}: {out}")
+            row = dbmod.get_ticket(con, tid)
+            self.assertEqual(row["status"], "queued", status)
+            self.assertEqual(row["attempts"], 2, f"{status} lost its attempt count")
+            self.assertIn("requeued", out)
+
+    def test_retry_is_what_makes_the_next_run_use_the_strong_tier(self):
+        con, run = self._env()
+        tid = self._ticket(con, "failed", attempts=1)
+        run("retry", str(tid))
+        ticket = dbmod.get_ticket(con, tid)
+        self.assertEqual(agentmod.tier_decision({"agent": {"cheap": {}, "strong": {}}},
+                                                ticket)[0], "strong")
+
+    def test_in_flight_and_shipped_statuses_are_refused(self):
+        for status in self.REFUSED:
+            con, run = self._env()
+            tid = self._ticket(con, status)
+            before = dbmod.get_ticket(con, tid)
+            code, out = run("retry", str(tid))
+            self.assertEqual(code, 1, f"{status} should have been refused")
+            after = dbmod.get_ticket(con, tid)
+            self.assertEqual(after["status"], status)
+            self.assertEqual(after["attempts"], before["attempts"])
+            self.assertEqual(after["updated_at"], before["updated_at"])
+            self.assertIn("cannot retry", out)
+            self.assertIn(status, out)
+
+    def test_unknown_id_is_refused_with_exit_one(self):
+        _, run = self._env()
+        code, out = run("retry", "4242")
+        self.assertEqual(code, 1)
+        self.assertIn("no such ticket 4242", out)
+
+    def test_retry_only_moves_a_ticket_that_is_still_finished(self):
+        con = fresh_db(self)
+        tid = self._ticket(con, "escalated")
+        con.execute("UPDATE tickets SET status='running' WHERE id=?", (tid,))
+        ok, msg = dbmod.retry_ticket(con, tid)
+        self.assertFalse(ok)
+        self.assertEqual(dbmod.get_ticket(con, tid)["status"], "running")
+        self.assertIn("running", msg)
+
+    def test_requeued_ticket_can_be_claimed_again(self):
+        con = fresh_db(self)
+        tid = self._ticket(con, "failed")
+        self.assertIsNone(dbmod.claim_next(con))
+        self.assertTrue(dbmod.retry_ticket(con, tid)[0])
+        self.assertEqual(dbmod.claim_next(con)["id"], tid)
+        self.assertIsNone(dbmod.claim_next(con))
+
+
 class TestNoComments(unittest.TestCase):
     """The no-comments rule must hold for the whole repo, not by memory."""
 
