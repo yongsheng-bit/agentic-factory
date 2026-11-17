@@ -19,9 +19,12 @@ Safety posture
   only by how long you let it be wrong.
 
 Usage:  python local_llm.py <prompt-file>
-Env:    LLM_BASE, LLM_MODEL, LLM_MAX_STEPS, LLM_MAX_TOKENS, LLM_TIMEOUT
-Exit:   0 after finish(), 1 on error/budget. Prints a JSON summary that
-        factory/agent.py parses for token counts and cost.
+Env:    LLM_BASE, LLM_MODEL, LLM_MAX_STEPS, LLM_MAX_TOKENS, LLM_MAX_CONTEXT,
+        LLM_TIMEOUT
+Exit:   0 after finish() OR when files were changed (the orchestrator's
+        gates judge the diff; an unfinished-but-tested diff beats a
+        discarded one), 1 on error or when nothing changed. Prints a JSON
+        summary that factory/agent.py parses for token counts and cost.
 """
 
 from __future__ import annotations
@@ -40,7 +43,8 @@ import urllib.request
 BASE = os.environ.get("LLM_BASE", "http://192.168.68.73:8080/v1").rstrip("/")
 MODEL = os.environ.get("LLM_MODEL", "qwen3.8-flash-next-unsloth-ud-iq4_xs")
 MAX_STEPS = int(os.environ.get("LLM_MAX_STEPS", "20"))
-MAX_TOTAL_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "60000"))
+MAX_TOTAL_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "600000"))
+MAX_CONTEXT_TOKENS = int(os.environ.get("LLM_MAX_CONTEXT", "100000"))
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "240"))
 TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 MAX_TOOL_CHARS = 6000
@@ -72,7 +76,8 @@ Rules:
 - Do NOT run git commands, install packages, or use the network. The orchestrator \
 commits, pushes and opens the pull request.
 - Verify with run_command when tests exist (python -m pytest, npm test, go test, ...). Run ONE command per call: there is no shell, so no pipes, no redirection, no &&.
-- When the task is complete, call finish with a one-paragraph summary.
+- When the task is complete, call finish with a one-paragraph summary. \
+EVERY reply must contain at least one tool call; plain prose is a failure.
 - If the task is impossible or the bug does not reproduce, call finish and say so \
 plainly. A correct "cannot do this, because X" beats a fabricated change.
 """
@@ -403,6 +408,38 @@ def repo_tree(limit=120):
                                if len(files) > len(shown) else "")
 
 
+def exhausted(prompt_tokens, completion_tokens,
+              ceiling=None, cumulative=None, cap=None):
+    """Should the loop stop before the next call?
+
+    The first version stopped when the CUMULATIVE sum of billed tokens crossed
+    LLM_MAX_TOKENS. That sum grows quadratically - every step re-sends the
+    whole history - so it measured spend, not context, and it killed every
+    ticket at step ~11 while the model still had 100k of window free. Cost
+    belongs to the ledger and the orchestrator's budget gates; the in-process
+    stop must be about the one thing it can actually overflow: the next call's
+    context.
+    """
+    if ceiling is None:
+        ceiling = MAX_CONTEXT_TOKENS
+    if cumulative is None:
+        cumulative = 0
+    if cap is None:
+        cap = MAX_TOTAL_TOKENS
+    return (prompt_tokens + completion_tokens > ceiling) or (cumulative > cap)
+
+
+def exit_code(finished, touched):
+    """0 lets the orchestrator keep and gate the worktree, 1 discards it.
+
+    finish() is the agent's own claim of done, and a small local model makes
+    that claim late or not at all. The diff and the gates are the authority,
+    so an out-of-steps run that left real changes is handed to the gates
+    instead of being thrown away.
+    """
+    return 0 if (finished or touched) else 1
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: local_llm.py <prompt-file>", file=sys.stderr)
@@ -413,11 +450,20 @@ def main():
                 {"role": "user", "content": f"## Repository files\n{repo_tree()}\n\n{task}"}]
 
     tin = tout = steps = 0
+    last_prompt = last_completion = 0
     summary = ""
     finished = False
     seen = set()
+    transcript_path = None
+    if sys.argv[1]:
+        transcript_path = os.path.join(
+            os.path.dirname(os.path.abspath(sys.argv[1])),
+            os.path.splitext(os.path.basename(sys.argv[1]))[0] + ".transcript.jsonl")
 
     for steps in range(1, MAX_STEPS + 1):
+        if exhausted(last_prompt, last_completion, cumulative=tin + tout):
+            summary = "stopped: context budget exceeded"
+            break
         try:
             resp = chat(messages)
         except RuntimeError as exc:
@@ -425,19 +471,23 @@ def main():
                               "input_tokens": tin, "output_tokens": tout}))
             return 1
         u = resp.get("usage") or {}
-        tin += int(u.get("prompt_tokens", 0))
-        tout += int(u.get("completion_tokens", 0))
+        last_prompt = int(u.get("prompt_tokens", 0))
+        last_completion = int(u.get("completion_tokens", 0))
+        tin += last_prompt
+        tout += last_completion
         msg = resp["choices"][0]["message"]
         calls = msg.get("tool_calls") or []
+        prose = (msg.get("content") or "").strip()
 
         if not calls:
-
             if steps >= MAX_STEPS - 1:
-                summary = (msg.get("content") or "").strip()
+                summary = prose
                 break
-            messages.append({"role": "assistant", "content": msg.get("content") or ""})
+            messages.append({"role": "assistant", "content": prose})
             messages.append({"role": "user",
-                             "content": "Call a tool now. Use finish when the task is done."})
+                             "content": "That reply had no tool call, so nothing happened. "
+                                        "Do not explain — act: call the next tool you need "
+                                        "(read_file, edit_file, run_command, or finish)."})
             continue
 
         messages.append({"role": "assistant", "content": msg.get("content") or "",
@@ -479,17 +529,29 @@ def main():
             messages.append({"role": "tool", "tool_call_id": c.get("id", ""),
                              "name": name, "content": str(result)[:MAX_TOOL_CHARS]})
 
+        if transcript_path:
+            try:
+                with open(transcript_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "step": steps, "prompt_tokens": last_prompt,
+                        "completion_tokens": last_completion,
+                        "calls": [[c["function"]["name"],
+                                   str(c["function"].get("arguments") or "")[:200]]
+                                  for c in calls] or ["(no tool call)"],
+                        "prose": prose[:300],
+                        "touched": sorted(CTX.touched)[-6:],
+                    }) + "\n")
+            except OSError:
+                pass
+
         if finished:
-            break
-        if tin + tout > MAX_TOTAL_TOKENS:
-            summary = "stopped: token budget exceeded"
             break
 
     print(json.dumps({"status": "completed" if finished else "budget",
                       "result": summary[:2000], "steps": steps,
                       "changed_files": sorted(CTX.touched),
                       "input_tokens": tin, "output_tokens": tout}))
-    return 0 if finished else 1
+    return exit_code(finished, CTX.touched)
 
 
 if __name__ == "__main__":
