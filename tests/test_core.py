@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import uuid
 
 from factory import agent as agentmod
 from factory import blast as blastmod
@@ -627,6 +628,64 @@ class TestTokenPlumbing(unittest.TestCase):
         env = wt._token_env("github_pat_test")
         self.assertEqual(env["GH_TOKEN"], "github_pat_test")
         self.assertEqual(env["GIT_COMMITTER_NAME"], wt.AGENT_IDENTITY[0])
+
+
+class TestAgentEnv(unittest.TestCase):
+    BASE = {
+        "PATH": "/usr/bin", "Path": "/usr/bin", "HOME": "/home/op",
+        "SystemRoot": "C:\\Windows", "USERPROFILE": "C:\\Users\\op",
+        "GH_TOKEN": "ghp_owner", "GITHUB_TOKEN": "gho_owner",
+        "FACTORY_WEBHOOK": "https://hooks.example/leak",
+        "AWS_SECRET_ACCESS_KEY": "aws", "NPM_TOKEN": "npm",
+        "OPENAI_API_KEY": "sk-openai", "LLM_API_KEY": "sk-llm",
+        "DATABASE_URL": "postgres://user:pw@db/app",
+        "SSH_AUTH_SOCK": "/tmp/socket", "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": "AUTHORIZATION: basic ***",
+    }
+
+    def test_credentials_never_reach_the_agent(self):
+        env = agentmod.minimal_env(base=self.BASE)
+        for name in ("GH_TOKEN", "GITHUB_TOKEN", "FACTORY_WEBHOOK",
+                     "AWS_SECRET_ACCESS_KEY", "NPM_TOKEN", "OPENAI_API_KEY",
+                     "LLM_API_KEY", "DATABASE_URL", "SSH_AUTH_SOCK",
+                     "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_0", "GIT_CONFIG_COUNT"):
+            self.assertNotIn(name, env, f"{name} was handed to the agent")
+
+    def test_tools_still_work(self):
+        env = agentmod.minimal_env(base=self.BASE)
+        for name in ("PATH", "HOME", "USERPROFILE", "SystemRoot"):
+            self.assertIn(name, env, f"{name} missing - the agent cannot run tools")
+
+    def test_windows_spelling_matched_but_original_preserved(self):
+        env = agentmod.minimal_env(base=self.BASE)
+        self.assertEqual(env.get("Path"), "/usr/bin")
+        self.assertEqual(env.get("SystemRoot"), "C:\\Windows")
+
+    def test_factory_still_configures_the_run(self):
+        env = agentmod.minimal_env(base=self.BASE,
+                                   spec_env={"LLM_BASE": "http://llm/v1"},
+                                   env_extra={"TICKET_ID": "7"})
+        self.assertEqual(env["LLM_BASE"], "http://llm/v1")
+        self.assertEqual(env["TICKET_ID"], "7")
+
+    def test_allowlist_can_be_widened_by_config(self):
+        env = agentmod.minimal_env(base=self.BASE, allow_extra=["FACTORY_WEBHOOK"])
+        self.assertEqual(env["FACTORY_WEBHOOK"], "https://hooks.example/leak")
+
+    def test_run_does_not_inherit_the_real_environment(self):
+        marker = "FACTORY_TEST_CANARY_" + uuid.uuid4().hex
+        spec = {"command": [sys.executable, "-c",
+                            "import os; print('\\n'.join(sorted(os.environ)))"],
+                "timeout_s": 60}
+        os.environ[marker] = "value-the-agent-must-never-see"
+        try:
+            res = agentmod.run({}, spec, "prompt", os.getcwd())
+        finally:
+            os.environ.pop(marker, None)
+        self.assertEqual(res["status"], "ok", res["stderr"][:300])
+        seen = {line.strip().upper() for line in res["stdout"].splitlines()}
+        self.assertNotIn(marker.upper(), seen)
 
 
 if __name__ == "__main__":
