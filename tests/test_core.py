@@ -688,5 +688,86 @@ class TestAgentEnv(unittest.TestCase):
         self.assertNotIn(marker.upper(), seen)
 
 
+class TestTierRouting(unittest.TestCase):
+    CFG = {"agent": {"cheap": {}, "strong": {}}}
+
+    def decision(self, ticket, cfg=None):
+        return agentmod.tier_decision(cfg or self.CFG, ticket)
+
+    def test_first_attempt_with_no_blast_is_cheap(self):
+        self.assertEqual(self.decision({"blast": None, "attempts": 0}),
+                         ("cheap", "default"))
+
+    def test_retry_escalates_to_the_strong_tier(self):
+        tier, reason = self.decision({"blast": None, "attempts": 1})
+        self.assertEqual(tier, "strong")
+        self.assertIn("escalated", reason)
+
+    def test_explicit_tier_beats_everything(self):
+        for ticket in ({"tier": "cheap", "blast": "high", "attempts": 5},
+                       {"tier": "strong", "blast": "low", "attempts": 0}):
+            tier, reason = self.decision(ticket)
+            self.assertEqual(tier, ticket["tier"])
+            self.assertEqual(reason, "explicit override")
+
+    def test_unknown_tier_value_is_ignored(self):
+        self.assertEqual(self.decision({"tier": "gpt-99", "attempts": 0})[0], "cheap")
+
+    def test_blast_carried_from_a_previous_diff_routes_strong(self):
+        self.assertEqual(self.decision({"blast": "medium", "attempts": 1}),
+                         ("strong", "blast=medium"))
+
+    def test_escalation_threshold_is_configurable(self):
+        cfg = {"agent": {"cheap": {}, "strong": {}, "escalate_after_attempts": 2}}
+        self.assertEqual(self.decision({"attempts": 1}, cfg)[0], "cheap")
+        self.assertEqual(self.decision({"attempts": 2}, cfg)[0], "strong")
+
+    def test_single_tier_config_still_routes_strong(self):
+        self.assertEqual(self.decision({"attempts": 0}, {"agent": {"strong": {}}})[0],
+                         "strong")
+
+    def test_decision_reads_a_database_row(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "route me")
+        ticket = dbmod.claim_next(con)
+        self.assertEqual(agentmod.tier_decision(self.CFG, ticket)[0], "cheap")
+        dbmod.bump_attempt(con, tid)
+        ticket = dbmod.get_ticket(con, tid)
+        self.assertEqual(agentmod.tier_decision(self.CFG, ticket)[0], "strong")
+
+    def test_pinned_tier_survives_the_queue(self):
+        con = fresh_db(self)
+        dbmod.add_ticket(con, "dangerous", tier="strong")
+        ticket = dbmod.claim_next(con)
+        if ticket is None:
+            self.fail("nothing claimed")
+        self.assertEqual(ticket["tier"], "strong")
+
+    def test_run_records_which_tier_ran_and_why(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "auditable")
+        run_id = dbmod.start_run(con, tid, 1, tier="strong", tier_reason="blast=high")
+        row = con.execute("SELECT tier, tier_reason FROM runs WHERE id=?",
+                          (run_id,)).fetchone()
+        self.assertEqual((row["tier"], row["tier_reason"]), ("strong", "blast=high"))
+
+    def test_old_databases_gain_the_columns(self):
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        con = dbmod.connect(path)
+        self.addCleanup(con.close)
+        con.execute("CREATE TABLE tickets (id INTEGER PRIMARY KEY, title TEXT,"
+                    " status TEXT, attempts INTEGER, max_retries INTEGER,"
+                    " budget_usd REAL, spent_usd REAL, created_at REAL, updated_at REAL)")
+        con.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY, ticket_id INTEGER,"
+                    " attempt INTEGER, status TEXT, cost_usd REAL, detail TEXT,"
+                    " pid INTEGER, started_at REAL, ended_at REAL)")
+        dbmod.init(con)
+        for table, col in (("tickets", "tier"), ("runs", "tier"), ("runs", "tier_reason")):
+            cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
+            self.assertIn(col, cols, f"{table}.{col} missing after migration")
+
+
 if __name__ == "__main__":
     unittest.main()

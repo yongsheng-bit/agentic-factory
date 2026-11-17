@@ -31,10 +31,11 @@ def cmd_add(args):
     _, con = _open(args)
     tid = dbmod.add_ticket(con, args.title, args.body or "", source=args.source,
                            ref=args.ref, budget_usd=args.budget,
-                           max_retries=args.retries)
+                           max_retries=args.retries, tier=args.tier)
     if args.blast:
         dbmod.set_blast(con, tid, args.blast, "set manually")
-    print(f"queued ticket {tid}")
+    route = f" (pinned to {args.tier} tier)" if args.tier else ""
+    print(f"queued ticket {tid}{route}")
 
 
 def cmd_list(args):
@@ -44,10 +45,11 @@ def cmd_list(args):
         print("(empty)")
         return
     print(f"{'id':>4} {'status':<12} {'att':>3} {'spent':>7} {'blast':<6} "
-          f"{'ref':<10} title")
+          f"{'tier':<7} {'ref':<10} title")
     for r in rows:
         print(f"{r['id']:>4} {r['status']:<12} {r['attempts']:>3} "
               f"${r['spent_usd']:>6.2f} {(r['blast'] or '-'):<6} "
+              f"{(r['tier'] or 'auto'):<7} "
               f"{(r['ref'] or '-'):<10} {r['title'][:60]}")
 
 
@@ -157,6 +159,8 @@ def build_parser():
     s.add_argument("--budget", type=float, default=2.0)
     s.add_argument("--retries", type=int, default=3)
     s.add_argument("--blast", choices=["low", "medium", "high"])
+    s.add_argument("--tier", choices=["cheap", "strong"],
+                   help="pin the model tier instead of letting the router decide")
     s.set_defaults(fn=cmd_add)
 
     s = a.add_parser("list"); s.add_argument("--status"); s.set_defaults(fn=cmd_list)
