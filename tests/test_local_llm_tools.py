@@ -30,6 +30,15 @@ def w(path, text):
         fh.write(text)
 
 
+ENV_PROBE = """
+import os
+print("secret_leaked=", "FACTORY_TEST_SECRET" in os.environ, sep="")
+print("has_path=", "PATH" in os.environ, sep="")
+temp = os.environ.get("TEMP") or os.environ.get("TMP") or ""
+print("temp_in_tree=", os.path.realpath(temp).startswith(os.path.realpath(os.getcwd())), sep="")
+"""
+
+
 class ToolSandboxTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="llm-tool-")
@@ -97,14 +106,62 @@ class ToolSandboxTest(unittest.TestCase):
             self.assertIn("refused", llm.t_run({"command": cmd}), f"allowed: {cmd}")
 
     def test_benign_commands_allowed(self):
-        out = llm.t_run({"command": "echo hello"})
+        # No shell, so cmd builtins (echo, dir, set) are gone; a coding agent
+        # verifies with interpreters and test runners, which still work.
+        out = llm.t_run({"command": "python -c \"print('hello')\""})
         self.assertTrue(out.startswith("exit 0"), out)
         self.assertIn("hello", out)
 
     def test_run_command_runs_in_the_worktree(self):
-        out = llm.t_run({"command": "cd"})
+        llm.t_write({"path": "where.py",
+                     "content": "import os\nprint(os.getcwd())\n"})
+        out = llm.t_run({"command": "python where.py"})
         self.assertIn(os.path.realpath(self.tmp).lower().replace("\\", "/"),
                       out.lower().replace("\\", "/"))
+
+    # ---- command runner: no shell, scrubbed environment -------------------
+
+    def test_redirection_refused_and_nothing_written(self):
+        out = llm.t_run({"command": "python -c pass > ../escaped.txt"})
+        self.assertIn("no shell", out)
+        self.assertFalse(os.path.exists(
+            os.path.abspath(os.path.join(self.tmp, "..", "escaped.txt"))))
+
+    def test_pipes_and_chains_refused(self):
+        for cmd in ["python -c pass | more", "python -c pass && echo done",
+                    "python -c pass; echo done"]:
+            self.assertIn("no shell", llm.t_run({"command": cmd}), cmd)
+
+    def test_operators_inside_quoted_arguments_are_allowed(self):
+        # The runner has no shell, so a ';' inside an argument is data. Rejecting
+        # it would make `python -c "import os; print(1)"` unusable.
+        out = llm.t_run({"command": 'python -c "import sys; print(sys.version_info[0])"'})
+        self.assertTrue(out.startswith("exit 0"), out)
+
+    def test_child_environment_is_scrubbed(self):
+        os.environ["FACTORY_TEST_SECRET"] = "hunter2-do-not-leak"
+        try:
+            llm.t_write({"path": "showenv.py", "content": ENV_PROBE})
+            out = llm.t_run({"command": "python showenv.py"})
+        finally:
+            del os.environ["FACTORY_TEST_SECRET"]
+        self.assertIn("secret_leaked=False", out.replace(" ", ""))
+        self.assertIn("has_path=True", out.replace(" ", ""))
+
+    def test_scratch_dir_stays_inside_the_worktree(self):
+        llm.t_write({"path": "showenv.py", "content": ENV_PROBE})
+        out = llm.t_run({"command": "python showenv.py"})
+        self.assertIn("temp_in_tree=True", out.replace(" ", ""))
+
+    def test_arguments_naming_outside_paths_are_refused(self):
+        for cmd in ["python ..\\evil.py", "python C:\\Windows\\win.ini",
+                    "python /etc/passwd", "python -m pytest ../shared_tests"]:
+            self.assertIn("outside the worktree", llm.t_run({"command": cmd}).replace(
+                "contains '..'", "outside the worktree"), cmd)
+
+    def test_relative_paths_inside_the_worktree_are_fine(self):
+        llm.t_write({"path": "pkg\\t.py", "content": "print('ok')\n"})
+        self.assertIn("ok", llm.t_run({"command": "python pkg/t.py"}))
 
     # ---- discovery tools ----------------------------------------------------
 

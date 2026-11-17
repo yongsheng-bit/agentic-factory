@@ -112,9 +112,26 @@ The agent's sandbox is what lets a cheap model near a real repo:
 - `run_command` refuses VCS-mutating, destructive and network commands — the
   orchestrator owns commits and pushes; an agent that can `git push` is an agent
   that can ship
+- **`run_command` has no shell.** argv only: no pipes, no `>`, no `&&` (an
+  operator outside a quoted argument is refused with an explanation, not a
+  mysterious exit code). `.cmd`/`.bat` shims like `npm` are wrapped in
+  `cmd /c` with a fixed argv, so nothing user-shaped reaches the parser.
+- **the child's environment is an allowlist.** The orchestrator may hold
+  `GITHUB_TOKEN` or a cloud key; a child inherits everything by default, so
+  `set` used to be a credential read. `LLM_RUN_ENV` adds names a build needs.
+  `TEMP`/`TMP` are pinned inside the worktree so scratch stays observable.
+- arguments naming a path outside the worktree (`../x`, `C:\Windows\...`) are refused
 - tools **return** an error string instead of raising, so the model can recover
   from a bad path rather than killing the run
 - step and token budgets bound a confused model before it burns an hour
+
+**Honest limits.** This is a guardrail against a confused model, not a wall
+against a determined one: a program *given* a path can still resolve its way
+out, and a regex denylist cannot stop `python -c` from doing anything Python can
+do. The realistic attack is prompt injection from a file in the target repo. If
+you point this at a repository you care about, run the agent in a container with
+no network and no credentials — that is the only actual boundary. Cmd builtins
+(`echo`, `dir`, `set`) do not work, by design.
 
 Because the model is local, `price_per_mtok_*` is set to API-equivalent
 **shadow** prices in `config.example.json`. At $0 the per-ticket and daily

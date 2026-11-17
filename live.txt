@@ -1,0 +1,23 @@
+[ticket 1]
+[ticket 1] tier=cheap attempt=1 status=ok cost=$0.0000 13s
+  status=pr_open  blast=low  steps=6  tokens=13342/739  14s
+  agent said: Added the missing `MAXIMUM SUPREME` -> `SUPREME` entry to GRADE_MAP in dips.py so pump-receipt grades line up with the ledger column. Reproduced the two failures first (test_supreme, test_parse), then confirmed all 3 tests pass with `python -m unittest -v` (the identical `-q` rerun was blocked as a 
+  diff:
+    @@ -2,6 +2,7 @@
+    +    "MAXIMUM SUPREME": "SUPREME",
+[ticket 2]
+[ticket 1] tier=cheap attempt=1 status=ok cost=$0.0000 12s
+  status=pr_open  blast=low  steps=6  tokens=13342/758  13s
+  agent said: Added the missing grade mapping so pump-receipt text lines up with the ledger: `GRADE_MAP` in dips.py now contains `"MAXIMUM SUPREME": "SUPREME"` (placed right after the existing `"MAXIMUM": "REGULAR"` entry, matching the existing style). Reproduced the two failures first (`test_supreme`, `test_pars
+  diff:
+    @@ -2,6 +2,7 @@
+    +    "MAXIMUM SUPREME": "SUPREME",
+[ticket 3]
+[ticket 1] tier=cheap attempt=1 status=ok cost=$0.0000 12s
+  status=pr_open  blast=low  steps=6  tokens=13342/775  13s
+  agent said: Added the missing `MAXIMUM SUPREME` -> `SUPREME` entry to GRADE_MAP in dips.py (one line, matching existing style). Since normalize_grade() does an exact full-string dict lookup, the new key does not conflict with the existing `MAXIMUM` -> `REGULAR` entry. Verified with the test suite: before the ch
+  diff:
+    @@ -2,6 +2,7 @@
+    +    "MAXIMUM SUPREME": "SUPREME",
+
+3/3 tickets produced a PR whose branch passes the tests

@@ -31,6 +31,8 @@ import fnmatch
 import json
 import os
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -45,7 +47,7 @@ TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 MAX_TOOL_CHARS = 6000
 MAX_FILES_LISTED = 200
 
-SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "__pycache__", ".factory-worktrees",
+SKIP_DIRS = {".git", ".factory-tmp", "node_modules", ".venv", "venv", "__pycache__", ".factory-worktrees",
              "dist", "build", ".next", ".pytest_cache", ".mypy_cache", "vendor", ".idea"}
 
 # The orchestrator commits and pushes. The agent must not.
@@ -71,7 +73,7 @@ Rules:
 - Make the smallest change that satisfies the task. Do not refactor neighbours.
 - Do NOT run git commands, install packages, or use the network. The orchestrator \
 commits, pushes and opens the pull request.
-- Verify with run_command when tests exist (python -m pytest, npm test, go test, ...).
+- Verify with run_command when tests exist (python -m pytest, npm test, go test, ...). Run ONE command per call: there is no shell, so no pipes, no redirection, no &&.
 - When the task is complete, call finish with a one-paragraph summary.
 - If the task is impossible or the bug does not reproduce, call finish and say so \
 plainly. A correct "cannot do this, because X" beats a fabricated change.
@@ -117,7 +119,7 @@ TOOLS = [
             "required": ["text"]}}},
     {"type": "function", "function": {
         "name": "run_command",
-        "description": "Run a build/test command in the repo root. No git, no network.",
+        "description": "Run ONE build/test command in the repo root (no shell: no pipes, redirection or &&; no git, no network).",
         "parameters": {"type": "object", "properties": {
             "command": {"type": "string"}}, "required": ["command"]}}},
     {"type": "function", "function": {
@@ -178,7 +180,8 @@ def t_read(a):
     p, rel = r
     if not os.path.isfile(p):
         return f"error: not a file: {rel}"
-    lines = open(p, "r", encoding="utf-8", errors="replace").read().splitlines()
+    with open(p, "r", encoding="utf-8", errors="replace") as fh:
+        lines = fh.read().splitlines()
     off = max(1, int(a.get("offset") or 1))
     lim = int(a.get("limit") or 400)
     chunk = lines[off - 1:off - 1 + lim]
@@ -206,7 +209,8 @@ def t_edit(a):
     p, rel = r
     if not os.path.isfile(p):
         return f"error: not a file: {rel}"
-    text = open(p, "r", encoding="utf-8", errors="replace").read()
+    with open(p, "r", encoding="utf-8", errors="replace") as fh:
+        text = fh.read()
     old, new = str(a.get("old_text", "")), str(a.get("new_text", ""))
     if not old:
         return "error: old_text is empty"
@@ -247,14 +251,88 @@ def t_search(a):
         try:
             if os.path.getsize(p) > 2_000_000:
                 continue
-            for i, line in enumerate(open(p, "r", encoding="utf-8", errors="replace"), 1):
-                if needle in line:
-                    hits.append(f"{rel}:{i}: {line.strip()[:160]}")
-                    if len(hits) >= 80:
-                        return "\n".join(hits) + "\n[truncated at 80 matches]"
+            with open(p, "r", encoding="utf-8", errors="replace") as fh:
+                for i, line in enumerate(fh, 1):
+                    if needle in line:
+                        hits.append(f"{rel}:{i}: {line.strip()[:160]}")
+                        if len(hits) >= 80:
+                            return "\n".join(hits) + "\n[truncated at 80 matches]"
         except (OSError, UnicodeError):
             continue
     return "\n".join(hits) or f"no matches for {needle!r}"
+
+
+def _run_env():
+    """Environment for agent commands: an allowlist, nothing else.
+
+    The orchestrator may well run with GITHUB_TOKEN, a cloud key or a registry
+    password in its environment. A child inherits everything by default, so
+    `run_command("set")` would hand the model a credential it has no business
+    reading. Anything a build genuinely needs goes in LLM_RUN_ENV.
+    """
+    keep = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC", "HOME", "USERPROFILE",
+            "USERNAME", "LANG", "LC_ALL", "TZ", "PYTHONHOME", "PYTHONIOENCODING",
+            "PYTHONPATH", "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
+            "JAVA_HOME", "GOPATH", "GOROOT", "CARGO_HOME", "RUSTUP_HOME", "NVM_BIN",
+            "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS", "MSYSTEM", "SHELL"}
+    for extra in os.environ.get("LLM_RUN_ENV", "").split(os.pathsep):
+        if extra.strip():
+            keep.add(extra.strip())
+    env = {k: v for k, v in os.environ.items() if k.upper() in keep and v is not None}
+    # Keep scratch files inside the worktree: a test run that writes its cache
+    # to %TEMP% outside the tree is invisible to the commit, and one that writes
+    # inside is at least caught by ARTIFACT_EXCLUDES.
+    scratch = os.path.join(CTX.root, ".factory-tmp")
+    os.makedirs(scratch, exist_ok=True)
+    env["TEMP"] = env["TMP"] = env["TMPDIR"] = scratch
+    return env
+
+
+# Shell metacharacters: with shell=False these are literal arguments, so a
+# model reaching for a pipe needs telling, not a mysterious exit code.
+SHELL_OPS = re.compile(r"[<>|;&`]|\$\(")
+
+
+def _unquoted(cmd):
+    """Command line with quoted spans removed. An operator inside an argument is
+    data (`python -c "import os; ..."`); outside one it is shell syntax."""
+    return re.sub(r"\"[^\"]*\"|'[^']*'", "", cmd)
+
+_ABS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\\\]{2}|/)")
+
+
+def _argv(cmd):
+    """Split a command line without a shell. Windows keeps backslashes and
+    leaves the quotes on the tokens, so strip them."""
+    if os.name == "nt":
+        args = [a.strip('"') for a in shlex.split(cmd, posix=False)]
+    else:
+        args = shlex.split(cmd)
+    return [a for a in args if a != ""]
+
+
+def _arg_escapes(arg):
+    """Reject arguments that name a path outside the worktree.
+
+    This is a heuristic, not a wall: `pytest ../shared` is stopped, a program
+    that resolves a path itself is not. Real isolation means a container.
+    """
+    if arg.startswith("-"):                      # flags: -o, --cov=src, ...
+        arg = arg.split("=", 1)[-1].lstrip("=")
+        if not arg:
+            return None
+    norm = arg.replace("\\", "/")
+    if ".." in norm.split("/"):
+        return "contains '..'"
+    if _ABS_PATH.match(arg):
+        try:
+            p = os.path.realpath(arg)
+        except OSError:
+            return "unresolvable absolute path"
+        root = CTX.root
+        if p != root and not p.startswith(root + os.sep):
+            return "names a path outside the worktree"
+    return None
 
 
 def t_run(a):
@@ -262,11 +340,37 @@ def t_run(a):
     for rx, why in DENY:
         if re.search(rx, cmd, re.I):
             return f"error: command refused ({why}): {cmd[:120]}"
+    m = SHELL_OPS.search(_unquoted(cmd))
+    if m:
+        return (f"error: no shell available — '{m.group(0)}' is not supported. "
+                f"Run one command at a time; stdout and stderr are already merged.")
     try:
-        r = subprocess.run(cmd, shell=True, cwd=CTX.root, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=300)
+        args = _argv(cmd)
+    except ValueError as exc:
+        return f"error: cannot parse command ({exc})"
+    if not args:
+        return "error: empty command"
+    for arg in args[1:]:
+        why = _arg_escapes(arg)
+        if why:
+            return f"error: argument '{arg[:80]}' {why}; work inside the repository"
+    env = _run_env()
+    # npm/npx/yarn and pip-installed consoles are .cmd/.bat shims on Windows, and
+    # CreateProcess will not run those without cmd.exe. Metacharacters are already
+    # rejected above, so cmd here sees a fixed argv, not a command line.
+    resolved = shutil.which(args[0], path=env.get("PATH")) or args[0]
+    if resolved.lower().endswith((".cmd", ".bat")):
+        args = ["cmd", "/c", resolved] + args[1:]
+    else:
+        args = [resolved] + args[1:]
+    try:
+        r = subprocess.run(args, cwd=CTX.root, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=300,
+                           env=env)
     except subprocess.TimeoutExpired:
         return "error: command timed out after 300s"
+    except FileNotFoundError:
+        return f"error: '{args[0]}' is not installed or not on PATH"
     except OSError as exc:
         return f"error: {exc}"
     out = ((r.stdout or "") + (r.stderr or "")).strip()

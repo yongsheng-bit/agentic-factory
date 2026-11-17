@@ -7,6 +7,7 @@ factory.json
 __pycache__/
 *.pyc
 .factory-worktrees/
+.factory-tmp/
 changed.txt
 numstat.txt
 lizard.txt

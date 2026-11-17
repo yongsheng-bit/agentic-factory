@@ -12,11 +12,15 @@ from factory import db as dbmod
 from factory import gates
 
 
-def fresh_db():
+def fresh_db(case=None):
+    """A throwaway queue. Pass the TestCase so the connection is closed:
+    sqlite handles left open make the suite noisy under -W error::ResourceWarning."""
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     con = dbmod.connect(path)
     dbmod.init(con)
+    if case is not None:
+        case.addCleanup(con.close)
     return con
 
 
@@ -63,7 +67,7 @@ class TestBlast(unittest.TestCase):
 
 class TestQueue(unittest.TestCase):
     def test_claim_is_atomic(self):
-        con = fresh_db()
+        con = fresh_db(self)
         a = dbmod.add_ticket(con, "first")
         b = dbmod.add_ticket(con, "second")
         c1, c2 = dbmod.claim_next(con), dbmod.claim_next(con)
@@ -71,7 +75,7 @@ class TestQueue(unittest.TestCase):
         self.assertIsNone(dbmod.claim_next(con))
 
     def test_no_double_claim(self):
-        con = fresh_db()
+        con = fresh_db(self)
         dbmod.add_ticket(con, "only one")
         first = dbmod.claim_next(con)
         second = dbmod.claim_next(con)
@@ -79,7 +83,7 @@ class TestQueue(unittest.TestCase):
         self.assertIsNone(second)
 
     def test_retry_cap(self):
-        con = fresh_db()
+        con = fresh_db(self)
         tid = dbmod.add_ticket(con, "flaky", max_retries=3)
         t = dbmod.get_ticket(con, tid)
         self.assertEqual(t["max_retries"], 3)
@@ -89,7 +93,7 @@ class TestQueue(unittest.TestCase):
         self.assertGreaterEqual(dbmod.attempt_of(con, tid), t["max_retries"])
 
     def test_kill_switch(self):
-        con = fresh_db()
+        con = fresh_db(self)
         self.assertFalse(dbmod.is_paused(con))
         dbmod.set_paused(con, True)
         self.assertTrue(dbmod.is_paused(con))
@@ -97,7 +101,7 @@ class TestQueue(unittest.TestCase):
         self.assertFalse(dbmod.is_paused(con))
 
     def test_spend_tracking_and_daily_cap(self):
-        con = fresh_db()
+        con = fresh_db(self)
         tid = dbmod.add_ticket(con, "costly")
         run = dbmod.start_run(con, tid, 1)
         dbmod.end_run(con, run, "ok", 1.25, "fine")
@@ -105,7 +109,7 @@ class TestQueue(unittest.TestCase):
         self.assertGreaterEqual(dbmod.spend_today(con), 1.25)
 
     def test_ticket_budget_is_visible_before_start(self):
-        con = fresh_db()
+        con = fresh_db(self)
         tid = dbmod.add_ticket(con, "capped", budget_usd=0.5)
         run = dbmod.start_run(con, tid, 1)
         dbmod.end_run(con, run, "fail", 0.6, "boom")
@@ -113,14 +117,14 @@ class TestQueue(unittest.TestCase):
         self.assertGreaterEqual(dbmod.ticket_spend(con, tid), t["budget_usd"])
 
     def test_last_failure_feeds_retry_prompt(self):
-        con = fresh_db()
+        con = fresh_db(self)
         tid = dbmod.add_ticket(con, "x")
         run = dbmod.start_run(con, tid, 1)
         dbmod.end_run(con, run, "fail", 0.1, "TypeError: nope")
         self.assertIn("TypeError", dbmod.last_failure(con, tid))
 
     def test_watchdog_reaps_stale_runs(self):
-        con = fresh_db()
+        con = fresh_db(self)
         tid = dbmod.add_ticket(con, "orphan")
         run = dbmod.start_run(con, tid, 1)
         con.execute("UPDATE runs SET started_at = 1 WHERE id=?", (run,))
@@ -131,6 +135,8 @@ class TestQueue(unittest.TestCase):
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         c1, c2 = dbmod.connect(path), dbmod.connect(path)
+        self.addCleanup(c1.close)
+        self.addCleanup(c2.close)
         dbmod.init(c1)
         dbmod.add_ticket(c1, "shared queue")
         got = [dbmod.claim_next(c1), dbmod.claim_next(c2)]

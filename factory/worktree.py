@@ -151,6 +151,7 @@ ARTIFACT_EXCLUDES = [
     ":(exclude,glob)**/__pycache__/", ":(exclude,glob)__pycache__/",
     ":(exclude,glob)**/*.py[cod]",
     ":(exclude,glob)**/.pytest_cache/", ":(exclude,glob).pytest_cache/",
+    ":(exclude,glob)**/.factory-tmp/", ":(exclude,glob).factory-tmp/",
     ":(exclude,glob)**/.mypy_cache/", ":(exclude,glob)**/.ruff_cache/",
     ":(exclude,glob)**/node_modules/",
     ":(exclude,glob)**/dist/", ":(exclude,glob)**/build/",
