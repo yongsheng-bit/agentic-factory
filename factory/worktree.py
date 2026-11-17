@@ -21,7 +21,13 @@ def _git(args, cwd=None):
     r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", timeout=600)
     if r.returncode != 0:
-        raise WorktreeError(f"git {' '.join(args)}: {r.stderr.strip()[:400]}")
+        # rc and stdout belong in the message: a real run died on
+        # "git add -A: " with nothing after the colon, because git sometimes
+        # fails with the explanation on stdout (or nowhere) and an empty
+        # reason is undebuggable after the worktree is already gone.
+        detail = (r.stderr.strip() or r.stdout.strip() or "(no output)")
+        raise WorktreeError(f"git {' '.join(args)}: rc={r.returncode} {detail[:400]}"
+                            f" [cwd={cwd}]")
     return r.stdout
 
 
@@ -71,6 +77,28 @@ def create(root, ticket_id, ref=None, base="HEAD"):
     return path, branch
 
 
+def _rmtree(path):
+    """Delete a directory tree on Windows, where a leftover file can be
+    read-only or briefly locked. Returns True if the path is gone."""
+    import shutil
+    import stat
+    import time
+
+    def _ro(func, p, exc):
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+
+    for _ in range(4):
+        if not os.path.lexists(path):
+            return True
+        shutil.rmtree(path, onerror=_ro)
+        time.sleep(0.25)
+    return not os.path.lexists(path)
+
+
 def remove(root, path, branch=None, force=True):
     root = repo_root(root)
     args = ["worktree", "remove", path]
@@ -79,13 +107,24 @@ def remove(root, path, branch=None, force=True):
     try:
         _git(args, cwd=root)
     except WorktreeError:
-        if os.path.exists(path):
-            import shutil
-            shutil.rmtree(path, ignore_errors=True)
+        pass
+    # `git worktree remove` unregisters the worktree but refuses to delete a
+    # directory that still holds untracked files - and the agent's own scratch
+    # (.factory-tmp) lives inside it. Left behind, that stub makes the next
+    # `worktree add` die with "already exists", so the retry escalates too.
+    if not _rmtree(path):
         try:
             _git(["worktree", "prune"], cwd=root)
         except WorktreeError:
             pass
+        raise WorktreeError(
+            f"could not delete stale worktree dir {path} - a file inside is "
+            "locked (open editor, AV scan, or a worker still running). Remove "
+            "it by hand before retrying this ticket.")
+    try:
+        _git(["worktree", "prune"], cwd=root)
+    except WorktreeError:
+        pass
     if branch:
         try:
             _git(["branch", "-D", branch], cwd=root)

@@ -202,7 +202,8 @@ class TestAgent(unittest.TestCase):
         ticket = {"id": 8, "ref": "X-2", "title": "t", "body": "b", "max_retries": 3}
         p = agentmod.write_prompt(tempfile.mkdtemp(), ticket, 2,
                                   extra="KeyError: boom", out_dir=out)
-        text = open(p, encoding="utf-8").read()
+        with open(p, encoding="utf-8") as fh:
+            text = fh.read()
         self.assertIn("KeyError: boom", text)
         self.assertIn("attempt 2 of 3", text)
 
