@@ -139,16 +139,52 @@ def _extract_cost(stdout_text, spec):
     return est, tin, tout
 
 
+ENV_ALLOWLIST = (
+    "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
+    "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "LANG", "LC_ALL",
+    "TZ", "PYTHONIOENCODING", "PYTHONUTF8", "PAGER", "GIT_PAGER",
+    "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT",
+)
+
+
+def minimal_env(base=None, allow_extra=(), spec_env=None, env_extra=None):
+    """Build a child environment from an allowlist instead of inheriting everything.
+
+    The agent is untrusted code with a shell. Handing it `dict(os.environ)` means
+    every credential the orchestrator or its operator happens to carry - GitHub
+    tokens, webhooks, cloud keys, database URLs - is one `env` away from the diff
+    it writes. A model that decides to exfiltrate, or a ticket that tricks it into
+    printing the environment into a commit, then leaks the operator's account
+    rather than the ticket's.
+
+    Allowlist, not denylist: a denylist must anticipate every secret, and new
+    ones appear the moment someone exports something. Names are matched
+    case-insensitively because Windows spells its variables however the installer
+    felt that day (`Path`, not `PATH`), while the original spelling is preserved
+    so the child sees what it expects.
+
+    `spec_env` and `env_extra` are applied unconditionally afterwards: those are
+    the factory deliberately configuring this run, not the ambient environment.
+    """
+    base = os.environ if base is None else base
+    allow = {n.upper() for n in ENV_ALLOWLIST}
+    allow |= {n.upper() for n in allow_extra}
+    env = {name: value for name, value in base.items() if name.upper() in allow}
+    for src in (spec_env, env_extra):
+        if src:
+            env.update(src)
+    return env
+
+
 def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=None):
     """Run one agent attempt. Returns dict(status, cost_usd, stdout, stderr, seconds, pid)."""
     spec = dict(spec)
     if timeout_s is None:
         timeout_s = int(spec.get("timeout_s", 1800))
     argv = build_argv(spec, prompt, prompt_path or "")
-    env = dict(os.environ)
-    env.update(spec.get("env", {}) or {})
-    if env_extra:
-        env.update(env_extra)
+    allow_extra = ((cfg or {}).get("agent", {}) or {}).get("env_allowlist", [])
+    env = minimal_env(allow_extra=allow_extra, spec_env=spec.get("env", {}) or {},
+                      env_extra=env_extra)
 
     t0 = time.time()
     try:
