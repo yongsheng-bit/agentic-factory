@@ -53,6 +53,28 @@ def cmd_list(args):
               f"{(r['ref'] or '-'):<10} {r['title'][:60]}")
 
 
+def cmd_show(args):
+    """One ticket, everything the queue knows about it, no SQL required."""
+    _, con = _open(args)
+    t = dbmod.get_ticket(con, args.id)
+    if t is None:
+        print(f"no such ticket {args.id}")
+        sys.exit(1)
+    run = con.execute(
+        "SELECT tier, tier_reason FROM runs WHERE ticket_id=?"
+        " ORDER BY id DESC LIMIT 1", (t["id"],)).fetchone()
+    tier = (run["tier"] if run else None) or "-"
+    why = (run["tier_reason"] if run else None) or "-"
+    print(f"ticket     : {t['id']} {t['title']}")
+    print(f"status     : {t['status']}")
+    print(f"attempts   : {t['attempts']}/{t['max_retries']}")
+    print(f"spent      : ${float(t['spent_usd']):.2f} of ${float(t['budget_usd']):.2f}")
+    print(f"blast      : {(t['blast'] or '-')} ({t['blast_reason'] or '-'})")
+    print(f"tier       : {tier} ({why})")
+    print(f"pr         : {t['pr_url'] or '-'}")
+    print(f"last error : {dbmod.last_failure(con, t['id']) or '-'}")
+
+
 def cmd_status(args):
     cfg, con = _open(args)
     paused = dbmod.is_paused(con)
@@ -164,6 +186,8 @@ def build_parser():
     s.set_defaults(fn=cmd_add)
 
     s = a.add_parser("list"); s.add_argument("--status"); s.set_defaults(fn=cmd_list)
+    s = a.add_parser("show"); s.add_argument("id", type=int)
+    s.set_defaults(fn=cmd_show)
     a.add_parser("status").set_defaults(fn=cmd_status)
     a.add_parser("pause").set_defaults(fn=cmd_pause)
     a.add_parser("resume").set_defaults(fn=cmd_resume)

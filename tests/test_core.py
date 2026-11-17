@@ -576,6 +576,83 @@ class TestCliSurface(unittest.TestCase):
         self.assertTrue(callable(ns.fn))
 
 
+class TestShowCommand(unittest.TestCase):
+    """`factory show <id>` is the only way to read one ticket back.
+
+    Everything the escalation logic decides (tier, blast, spend, the failure the
+    next attempt will be told about) lives in the database, so a ticket that
+    cannot be inspected is a ticket that cannot be debugged without SQL.
+    """
+
+    def _env(self):
+        """A real config file pointing at a real queue, so the CLI is
+        exercised end to end instead of through a mocked _open()."""
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db}, fh)
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        def run(*argv):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, *argv])
+            return buf.getvalue()
+
+        return con, cfg, run
+
+    def test_seeded_ticket_shows_every_field(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "flaky", max_retries=4, budget_usd=3.0)
+        dbmod.bump_attempt(con, tid)
+        dbmod.set_blast(con, tid, "high", "touches auth")
+        dbmod.set_pr(con, tid, "https://github.com/acme/widget/pull/12")
+        first = dbmod.start_run(con, tid, 1, tier="cheap", tier_reason="default")
+        dbmod.end_run(con, first, "fail", 0.11, "TypeError: nope")
+        second = dbmod.start_run(con, tid, 2, tier="strong", tier_reason="escalated")
+        dbmod.end_run(con, second, "ok", 0.31, "shipped")
+
+        out = run("show", str(tid))
+        self.assertIn("queued", out)
+        self.assertIn("1/4", out)
+        self.assertIn("$0.42", out)
+        self.assertIn("high (touches auth)", out)
+        self.assertIn("strong (escalated)", out)
+        self.assertIn("https://github.com/acme/widget/pull/12", out)
+        self.assertIn("TypeError: nope", out)
+
+    def test_unknown_id_says_so_and_exits_one(self):
+        import contextlib
+        import io
+
+        from factory import cli
+        _, cfg, _ = self._env()
+        buf = io.StringIO()
+        with self.assertRaises(SystemExit) as cm:
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, "show", "4242"])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(buf.getvalue().strip(), "no such ticket 4242")
+
+    def test_ticket_without_a_run_shows_placeholders(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "never started")
+        out = run("show", str(tid))
+        self.assertIn("tier       : - (-)", out)
+        self.assertIn("pr         : -", out)
+        self.assertIn("last error : -", out)
+        self.assertIn("blast      : - (-)", out)
+
+
 class TestNoComments(unittest.TestCase):
     """The no-comments rule must hold for the whole repo, not by memory."""
 
