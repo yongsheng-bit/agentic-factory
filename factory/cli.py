@@ -94,6 +94,14 @@ def cmd_runs(args):
               f"{(r['tier_reason'] or '-'):<24} {cost:>6} {started}")
 
 
+def cmd_retry(args):
+    """Requeue a finished ticket without touching its attempt count."""
+    _, con = _open(args)
+    ok, msg = dbmod.retry_ticket(con, args.id)
+    print(msg)
+    sys.exit(0 if ok else 1)
+
+
 def cmd_status(args):
     cfg, con = _open(args)
     paused = dbmod.is_paused(con)
@@ -211,6 +219,9 @@ def build_parser():
                                              help="only runs for this ticket id")
     s.add_argument("--limit", type=int, default=20)
     s.set_defaults(fn=cmd_runs)
+
+    s = a.add_parser("retry"); s.add_argument("id", type=int)
+    s.set_defaults(fn=cmd_retry)
     a.add_parser("status").set_defaults(fn=cmd_status)
     a.add_parser("pause").set_defaults(fn=cmd_pause)
     a.add_parser("resume").set_defaults(fn=cmd_resume)
