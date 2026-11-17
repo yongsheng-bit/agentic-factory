@@ -294,11 +294,41 @@ def commit_all(path, message):
     return True
 
 
-def push_branch(path, branch, remote="origin", token=None):
+def delete_remote_branch(path, branch, remote="origin", token=None):
+    """Remove one agent branch from the remote, ignoring "it was not there".
+
+    Only ever called for `agent/*` names, which the factory owns outright. The
+    shape is delete-then-push rather than `--force` so a mistake cannot rewrite
+    a branch somebody else pushed to.
+    """
     url = ""
     if token:
         url = _git(["remote", "get-url", remote], cwd=path)
     env = _auth_env(_identity_env(), token, url)
+    if not str(branch or "").startswith("agent/"):
+        raise WorktreeError(f"refusing to delete {remote}/{branch}: only "
+                            "agent-owned branches may be removed")
+    try:
+        _git(["push", remote, "--delete", branch], cwd=path, env=env)
+    except WorktreeError:
+        pass
+
+
+def push_branch(path, branch, remote="origin", token=None, attempt=1):
+    """Push an attempt's branch.
+
+    Branch names carry no attempt number, so a retry reuses the name. If an
+    earlier attempt pushed but never opened a pull request - or the PR was
+    closed - the remote head is a commit this attempt does not descend from and
+    a plain push is rejected as non-fast-forward, killing the ticket. Clearing
+    the stale agent-owned head first makes the retry pushable.
+    """
+    url = ""
+    if token:
+        url = _git(["remote", "get-url", remote], cwd=path)
+    env = _auth_env(_identity_env(), token, url)
+    if int(attempt or 1) > 1:
+        delete_remote_branch(path, branch, remote=remote, token=token)
     _git(["push", "-u", remote, branch], cwd=path, env=env)
 
 

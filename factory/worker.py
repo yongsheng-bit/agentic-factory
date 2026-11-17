@@ -133,7 +133,7 @@ def process_once(cfg, con, dry=False):
         if cfg.get("push", True):
             try:
                 wt.push_branch(path, branch, cfg.get("remote", "origin"),
-                               token=cfg.get("gh_token"))
+                               token=cfg.get("gh_token"), attempt=attempt)
                 pr_url = wt.open_pr(path, branch, f"{ticket['ref'] or ''} {ticket['title']}".strip(),
                                     body, base=cfg.get("pr_base", "main"),
                                     gh_path=cfg.get("gh_path"),
