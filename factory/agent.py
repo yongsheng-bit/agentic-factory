@@ -28,18 +28,65 @@ def load_config(path):
         return json.load(fh)
 
 
-def pick_tier(cfg, ticket):
-    """Route cheap vs strong model per task.
+TIERS = ("cheap", "strong")
 
-    Default policy: small, low-blast tickets go to the cheap tier. Anything the
-    blast gate flagged medium/high gets the strong model. Override with
-    ticket-level `tier` in config if you want.
+
+def _field(ticket, name, default=None):
+    if ticket is None:
+        return default
+    if isinstance(ticket, dict):
+        value = ticket.get(name, default)
+    else:
+        try:
+            value = ticket[name]
+        except (IndexError, KeyError):
+            return default
+    return default if value is None else value
+
+
+def tier_decision(cfg, ticket):
+    """Pick a model tier and say why. Returns (tier, reason).
+
+    A routing input has to exist at routing time. Blast radius is computed from
+    the diff, which only exists after the agent already ran, so it could never
+    have been the primary signal: every ticket rated low and the strong tier was
+    unreachable except by hand. Precedence now:
+
+      1. an explicit per-ticket tier (`factory add --tier strong`) - a human who
+         already knows this one is dangerous;
+      2. blast medium/high - declared at add time, or carried in from a previous
+         attempt's diff, where it really is an input to the retry decision;
+      3. escalation - any attempt after the first runs on the strong tier;
+      4. cheap.
+
+    Escalation is the load-bearing rule: it costs one cheap failure per ticket,
+    needs no predictor, and a failed cheap attempt is the only honest evidence
+    that a task was beyond the cheap model. Guessing difficulty from ticket prose
+    mis-routes silently and forever.
     """
-    tiers = cfg.get("agent", {})
+    tiers = (cfg or {}).get("agent", {}) or {}
     if "cheap" not in tiers or "strong" not in tiers:
-        return "strong"
-    blast = (ticket["blast"] or "low") if ticket else "low"
-    return "strong" if blast in ("medium", "high") else "cheap"
+        return "strong", "single-tier config"
+
+    explicit = _field(ticket, "tier")
+    if explicit in TIERS:
+        return explicit, "explicit override"
+
+    blast = _field(ticket, "blast", "low")
+    if blast in ("medium", "high"):
+        return "strong", f"blast={blast}"
+
+    attempts = int(_field(ticket, "attempts", 0))
+    escalate_after = int(tiers.get("escalate_after_attempts", 1))
+    if attempts >= escalate_after:
+        return "strong", f"escalated after {attempts} failed attempt(s)"
+
+    return "cheap", "default"
+
+
+def pick_tier(cfg, ticket):
+    """Tier only, for callers that do not care why."""
+    return tier_decision(cfg, ticket)[0]
 
 
 def build_argv(spec, prompt, prompt_path):

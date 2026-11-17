@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     spent_usd    REAL    NOT NULL DEFAULT 0.0,
     blast        TEXT,
     blast_reason TEXT,
+    tier         TEXT,
     branch       TEXT,
     pr_url       TEXT,
     review_state TEXT,   -- approved | admin-bypass | unreviewed (set by sync)
@@ -46,6 +47,8 @@ CREATE TABLE IF NOT EXISTS runs (
     status    TEXT    NOT NULL,          -- ok|fail|blocked|timeout|skipped
     cost_usd  REAL    NOT NULL DEFAULT 0.0,
     detail    TEXT    NOT NULL DEFAULT '',
+    tier         TEXT,
+    tier_reason  TEXT,
     pid       INTEGER,
     started_at REAL   NOT NULL,
     ended_at   REAL
@@ -76,20 +79,26 @@ def init(con: sqlite3.Connection) -> None:
 
                          ("review_state", "TEXT"),
                          ("merged_by", "TEXT"),
-                         ("merged_at", "REAL")):
+                         ("merged_at", "REAL"),
+                         ("tier", "TEXT")):
         if col not in have:
             con.execute(f"ALTER TABLE tickets ADD COLUMN {col} {coltype}")
+
+    have_runs = {r["name"] for r in con.execute("PRAGMA table_info(runs)")}
+    for col, coltype in (("tier", "TEXT"), ("tier_reason", "TEXT")):
+        if col not in have_runs:
+            con.execute(f"ALTER TABLE runs ADD COLUMN {col} {coltype}")
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
 
 
 def add_ticket(con, title, body="", source="manual", ref=None,
-               budget_usd=2.00, max_retries=3):
+               budget_usd=2.00, max_retries=3, tier=None):
     now = time.time()
     cur = con.execute(
         "INSERT INTO tickets (source, ref, title, body, budget_usd, max_retries,"
-        " created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-        (source, ref, title, body, float(budget_usd), int(max_retries), now, now),
+        " tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (source, ref, title, body, float(budget_usd), int(max_retries), tier, now, now),
     )
     return int(cur.lastrowid)
 
@@ -164,10 +173,11 @@ def bump_attempt(con, ticket_id):
 
 
 
-def start_run(con, ticket_id, attempt, pid=None):
+def start_run(con, ticket_id, attempt, pid=None, tier=None, tier_reason=None):
     cur = con.execute(
-        "INSERT INTO runs (ticket_id, attempt, status, started_at, pid) VALUES (?,?,?,?,?)",
-        (ticket_id, attempt, "running", time.time(), pid))
+        "INSERT INTO runs (ticket_id, attempt, status, tier, tier_reason, started_at, pid)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (ticket_id, attempt, "running", tier, tier_reason, time.time(), pid))
     return int(cur.lastrowid)
 
 

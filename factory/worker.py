@@ -48,7 +48,7 @@ def process_once(cfg, con, dry=False):
         return "rejected"
 
     repo = cfg["repo"]
-    tier = agentmod.pick_tier(cfg, ticket)
+    tier, tier_reason = agentmod.tier_decision(cfg, ticket)
     spec = cfg["agent"][tier]
     attempt = int(ticket["attempts"]) + 1
 
@@ -69,11 +69,12 @@ def process_once(cfg, con, dry=False):
             dbmod.bump_attempt(con, ticket["id"])
             return f"dry-run (tier={tier}, worktree={path})"
 
-        run_id = dbmod.start_run(con, ticket["id"], attempt)
+        run_id = dbmod.start_run(con, ticket["id"], attempt,
+                                 tier=tier, tier_reason=tier_reason)
         res = agentmod.run(cfg, spec, ticket["title"], path, prompt_path=prompt_path)
         dbmod.end_run(con, run_id, res["status"], res.get("cost_usd", 0.0),
                       (res.get("stderr") or res.get("stdout") or "")[:2000])
-        print(f"[ticket {ticket['id']}] tier={tier} attempt={attempt} "
+        print(f"[ticket {ticket['id']}] tier={tier} ({tier_reason}) attempt={attempt} "
               f"status={res['status']} cost=${res.get('cost_usd', 0.0):.4f} "
               f"{res['seconds']:.0f}s", flush=True)
 
