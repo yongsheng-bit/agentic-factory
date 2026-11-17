@@ -54,6 +54,30 @@ python tests/live_llm.py 5          # hit-rate over 5 tickets
 python tests/live_adversarial.py    # phantom bug + harder task
 ```
 
+## Commands
+
+Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
+`factory.json`). Flags below are exactly the ones `factory/cli.py` defines.
+
+| Command | Flags | What it does |
+|---|---|---|
+| `init` | — | Create the sqlite queue at `db` in the config |
+| `add <title>` | `--body`, `--ref`, `--source`, `--budget`, `--retries`, `--blast {low,medium,high}`, `--tier {cheap,strong}` | Queue a ticket; `--blast` pins the blast rating, `--tier` pins the model tier instead of letting the router decide |
+| `list` | `--status` | Ticket table: status, attempts, spend, blast, tier, ref |
+| `status` | — | Kill-switch state, today's spend vs the daily cap, status counts, tier mix, merged-without-review count |
+| `show <id>` | — | One ticket in full: blast + reason, tier + reason, spend vs budget, PR URL, last failure |
+| `runs` | `--ticket`, `--limit` | Run history with the routing decision, so a tier choice can be audited later |
+| `retry <id>` | — | Requeue a `failed`/`escalated`/`closed` ticket without resetting its attempt count |
+| `tier <id> {cheap,strong,auto}` | — | Pin a ticket's tier, or `auto` to hand it back to the router; prints the resulting route |
+| `pause` | — | **Kill switch.** No new tickets start; running agents finish their current step |
+| `resume` | — | Release the kill switch |
+| `once` | `--dry` | Process a single ticket; `--dry` sets up the worktree without running an agent |
+| `worker` | `--dry`, `--idle` | Run the loop, sleeping `--idle` seconds when the queue is empty |
+| `watchdog` | `--older-than`, `--kill` | Reap runs older than `--older-than` seconds and escalate their tickets; `--kill` also tree-kills the agents still running |
+| `sync` | `--gh` | **Read PR state back** from GitHub into the queue: merged/closed, who merged, `approved` vs `admin-bypass`. `--gh` overrides the `gh` binary path |
+| `gate` | `--path` | Run the secret + dependency gates over a repo/worktree; exit 1 on failure |
+| `blast` | `--path` | Classify the working diff as low/medium/high; exit 2 on high |
+
 ## Controls this implements
 
 | Control | Where | Why it exists |
@@ -184,7 +208,7 @@ factory/gates.py     secret + dependency gate
 factory/worktree.py  per-ticket git worktree isolation
 factory/agent.py     model-tier routing, wall-clock cap, tree kill, cost parse
 factory/worker.py    the loop
-factory/cli.py       add / list / status / pause / resume / once / worker / watchdog / gate / blast
+factory/cli.py       the whole CLI - see Commands above
 scripts/local_llm.py cheap-tier agent against a local OpenAI-compatible endpoint
 tools/blast_check.py same rules, run in CI
 .github/workflows/quality.yml
