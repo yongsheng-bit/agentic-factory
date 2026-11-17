@@ -10,6 +10,7 @@ import time
 
 from . import agent as agentmod
 from . import blast as blastmod
+from . import board as boardmod
 from . import db as dbmod
 from . import gates, sync as syncmod, worker, worktree as wt
 
@@ -235,6 +236,17 @@ def cmd_sync(args):
     sys.exit(1 if errors and not changes else 0)
 
 
+def cmd_board(args):
+    cfg, con = _open(args)
+    try:
+        moves = boardmod.sync_board(cfg, con, dry=args.dry)
+    except boardmod.BoardError as exc:
+        print(f"board: {exc}")
+        sys.exit(1)
+    for tid, status, column in moves:
+        print(f"ticket {tid}: {status} -> {column}" + (" (dry)" if args.dry else ""))
+
+
 def cmd_gate(args):
     cfg, _ = _open(args)
     root = args.path or cfg["repo"]
@@ -336,6 +348,11 @@ def build_parser():
     s.add_argument("--gh", help="path to the gh CLI; default is config gh_path, "
                                 "then PATH, then the per-user install")
     s.set_defaults(fn=cmd_sync)
+
+    s = a.add_parser("board")
+    s.add_argument("--dry", action="store_true",
+                   help="print the column moves without touching GitHub")
+    s.set_defaults(fn=cmd_board)
 
     s = a.add_parser("gate"); s.add_argument("--path"); s.set_defaults(fn=cmd_gate)
     s = a.add_parser("blast"); s.add_argument("--path"); s.set_defaults(fn=cmd_blast)

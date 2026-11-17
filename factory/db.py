@@ -76,11 +76,14 @@ def init(con: sqlite3.Connection) -> None:
 
     have = {r["name"] for r in con.execute("PRAGMA table_info(tickets)")}
     for col, coltype in (("pr_url", "TEXT"),
-
                          ("review_state", "TEXT"),
                          ("merged_by", "TEXT"),
                          ("merged_at", "REAL"),
-                         ("tier", "TEXT")):
+                         ("tier", "TEXT"),
+                         ("issue_number", "INTEGER"),
+                         ("issue_node", "TEXT"),
+                         ("project_item", "TEXT"),
+                         ("issue_state", "TEXT")):
         if col not in have:
             con.execute(f"ALTER TABLE tickets ADD COLUMN {col} {coltype}")
 

@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import uuid
+from unittest.mock import patch
 
 from factory import agent as agentmod
 from factory import blast as blastmod
@@ -1227,9 +1228,78 @@ class TestTierRouting(unittest.TestCase):
                     " attempt INTEGER, status TEXT, cost_usd REAL, detail TEXT,"
                     " pid INTEGER, started_at REAL, ended_at REAL)")
         dbmod.init(con)
-        for table, col in (("tickets", "tier"), ("runs", "tier"), ("runs", "tier_reason")):
+        for table, col in (("tickets", "tier"), ("runs", "tier"), ("runs", "tier_reason"),
+                           ("tickets", "issue_number"), ("tickets", "issue_node"),
+                           ("tickets", "project_item"), ("tickets", "issue_state")):
             cols = {r["name"] for r in con.execute(f"PRAGMA table_info({table})")}
             self.assertIn(col, cols, f"{table}.{col} missing after migration")
+
+
+class TestBoard(unittest.TestCase):
+    def _env(self):
+        import tempfile
+        from factory import board, db as dbmod
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        con = dbmod.connect(path)
+        self.addCleanup(con.close)
+        dbmod.init(con)
+        cfg = {"repo_owner": "o", "repo_name": "r", "project_id": "PVT_x",
+               "gh_token": "t"}
+        return board, con, cfg
+
+    def test_every_queue_status_has_a_column(self):
+        from factory import board
+        for status in ("queued", "running", "pr_open", "needs_review",
+                       "escalated", "merged", "closed"):
+            self.assertIn(status, board.COLUMN_FOR)
+
+    def test_dry_run_touches_nothing(self):
+        board, con, cfg = self._env()
+        dbmod.add_ticket(con, "t")
+        calls = []
+        with patch.object(board, "_request", lambda *a, **k: calls.append(a)):
+            moves = board.sync_board(cfg, con, dry=True)
+        self.assertEqual(moves, [(1, "queued", "Open")])
+        self.assertEqual(calls, [])
+
+    def test_missing_project_id_is_a_clear_error(self):
+        board, con, cfg = self._env()
+        cfg.pop("project_id")
+        with self.assertRaises(board.BoardError):
+            board.sync_board(cfg, con)
+
+    def test_issue_created_once_and_remembered(self):
+        board, con, cfg = self._env()
+        dbmod.add_ticket(con, "t")
+        ticket = con.execute("SELECT * FROM tickets").fetchone()
+        calls = []
+
+        def fake(cfg_, url, method, body=None, graphql=False):
+            calls.append((url, method))
+            return {"number": 42, "node_url": "https://gh/o/r/issues/42"}
+        with patch.object(board, "_request", fake):
+            self.assertEqual(board.ensure_issue(cfg, con, ticket), 42)
+        row = con.execute("SELECT issue_number, issue_node, issue_state"
+                          " FROM tickets").fetchone()
+        self.assertEqual((row["issue_number"], row["issue_node"],
+                          row["issue_state"]), (42, "42", "open"))
+        fresh = con.execute("SELECT * FROM tickets").fetchone()
+        self.assertEqual(board.ensure_issue(cfg, con, fresh), 42)
+        self.assertEqual(len(calls), 1)
+
+    def test_close_issue_is_idempotent(self):
+        board, con, cfg = self._env()
+        dbmod.add_ticket(con, "t")
+        con.execute("UPDATE tickets SET issue_number=42, issue_state='open'")
+        ticket = con.execute("SELECT * FROM tickets").fetchone()
+        calls = []
+        with patch.object(board, "_request",
+                          lambda c, u, m, b=None, graphql=False: calls.append((u, m)) or {}):
+            board.close_issue(cfg, con, ticket)
+            board.close_issue(cfg, con, con.execute("SELECT * FROM tickets").fetchone())
+        self.assertEqual(calls, [("/repos/o/r/issues/42", "PATCH")])
 
 
 if __name__ == "__main__":

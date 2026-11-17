@@ -3,6 +3,7 @@
   "db": "C:/Users/David/agentic-factory/factory.db",
   "base_branch": "main",
   "pr_base": "main",
+  "project_id": "PVT_... (optional: Projects v2 node id for `factory board`)",
   "remote": "origin",
   "push": true,
   "keep_worktrees": false,
