@@ -262,8 +262,21 @@ def ticket_spend(con, ticket_id):
     return float(r["s"])
 
 
-def spend_today(con):
-    midnight = time.time() - (time.time() % 86400)
+def spend_today(con, now=None):
+    """Spend since *local* midnight, the boundary the daily cap resets on.
+
+    A UTC boundary (`time.time() % 86400`) rolls over at 19:00 Eastern, so an
+    afternoon of runaway runs would quietly get a fresh budget nine hours
+    early. The offset is taken from `now` itself, so the answer never depends
+    on the process timezone changing mid-day. `now` is injectable for tests.
+    """
+    if now is None:
+        now = time.time()
+    lt = time.localtime(now)
+    offset = getattr(lt, "gmtoff", None)
+    if offset is None:
+        offset = -time.timezone if not lt.tm_isdst else -time.altzone
+    midnight = (int((now + offset) // 86400) * 86400) - offset
     r = con.execute("SELECT COALESCE(SUM(cost_usd),0) s FROM runs WHERE started_at>=?",
                     (midnight,)).fetchone()
     return float(r["s"])
