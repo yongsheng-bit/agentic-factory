@@ -487,6 +487,11 @@ class TestSync(unittest.TestCase):
         self.assertEqual(syncmod.classify({"state": "CLOSED", "reviews": []}),
                          ("closed", "unreviewed"))
         self.assertEqual(syncmod.classify({"state": "OPEN", "reviews": []}), (None, None))
+        self.assertEqual(syncmod.classify({"state": "OPEN", "reviews": []}, "closed"),
+                         ("pr_open", "unreviewed"))
+        for other in ("merged", "queued", "pr_open", "needs_review", "escalated"):
+            self.assertEqual(syncmod.classify({"state": "OPEN", "reviews": []}, other),
+                             (None, None), other)
 
     def test_sync_records_merged_and_how(self):
         dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "t"),
@@ -514,6 +519,41 @@ class TestSync(unittest.TestCase):
         self.assertEqual((changes, errors), ([], []))
         self.assertEqual([r["status"] for r in self.con.execute(
             "SELECT status FROM tickets ORDER BY id")], ["pr_open", "queued"])
+
+    def test_reopened_pr_reopens_a_closed_ticket(self):
+        tid = dbmod.add_ticket(self.con, "reopened work")
+        dbmod.set_pr(self.con, tid, "https://github.com/acme/widget/pull/11")
+        self.con.execute("UPDATE tickets SET status='closed', review_state='approved'"
+                         " WHERE id=?", (tid,))
+        self._fake({11: {"state": "OPEN", "reviews": []}})
+        changes, errors = syncmod.sync({}, self.con)
+        self.assertEqual(errors, [])
+        row = self.con.execute("SELECT * FROM tickets WHERE id=?", (tid,)).fetchone()
+        self.assertEqual(row["status"], "pr_open")
+        self.assertEqual(row["review_state"], "unreviewed")
+        self.assertEqual(changes[0][:4], (tid, "closed", "pr_open", "unreviewed"))
+
+    def test_open_pr_never_resurrects_merged_or_touches_other_statuses(self):
+        merged = dbmod.add_ticket(self.con, "already merged")
+        dbmod.set_pr(self.con, merged, "https://github.com/acme/widget/pull/12")
+        self.con.execute("UPDATE tickets SET status='merged', review_state='approved',"
+                         " merged_by='boss' WHERE id=?", (merged,))
+        queued = dbmod.add_ticket(self.con, "never ran")
+        dbmod.set_pr(self.con, queued, "https://github.com/acme/widget/pull/13")
+        review = dbmod.add_ticket(self.con, "waiting on a human")
+        dbmod.set_pr(self.con, review, "https://github.com/acme/widget/pull/14")
+        self.con.execute("UPDATE tickets SET status='needs_review' WHERE id=?", (review,))
+        calls = self._fake({12: {"state": "OPEN", "reviews": []},
+                            13: {"state": "OPEN", "reviews": []},
+                            14: {"state": "OPEN", "reviews": []}})
+        changes, errors = syncmod.sync({}, self.con)
+        self.assertEqual((changes, errors), ([], []))
+        self.assertEqual(
+            [(r["id"], r["status"], r["review_state"]) for r in self.con.execute(
+                "SELECT id, status, review_state FROM tickets ORDER BY id")],
+            [(merged, "merged", "approved"), (queued, "queued", None),
+             (review, "needs_review", None)])
+        self.assertEqual(calls, [("acme", "widget", 14)])
 
     def test_failed_lookup_never_marks_a_ticket_merged(self):
         dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "t"),

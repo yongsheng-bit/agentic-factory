@@ -59,8 +59,15 @@ def _epoch(iso):
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
 
-def classify(pr):
-    """(new_status, review_state) from a PR payload. None status = no change."""
+def classify(pr, current=None):
+    """(new_status, review_state) from a PR payload. None status = no change.
+
+    `current` is the ticket's status in the queue, and only matters for an OPEN
+    PR: a closed ticket whose PR was reopened goes back to `pr_open` so the
+    pushed-again work is visible, while a ticket in any other status is left
+    where it is. `merged` is never in the reopenable set, so a merged ticket
+    cannot be resurrected by someone reopening the wrong PR.
+    """
     state = (pr.get("state") or "").upper()
     if state == "MERGED":
         approved = any((r.get("state") or "").upper() == "APPROVED"
@@ -68,6 +75,8 @@ def classify(pr):
         return "merged", ("approved" if approved else "admin-bypass")
     if state == "CLOSED":
         return "closed", "unreviewed"
+    if state == "OPEN" and current == "closed":
+        return "pr_open", "unreviewed"
     return None, None
 
 def fetch_pr(gh, owner, repo, number, token=None):
@@ -89,7 +98,7 @@ def sync(cfg, con, gh_path=None):
     rows = con.execute(
         "SELECT id, ref, title, status, pr_url FROM tickets "
         "WHERE pr_url IS NOT NULL AND pr_url <> '' "
-        "  AND status IN ('pr_open','needs_review','escalated')").fetchall()
+        "  AND status IN ('pr_open','needs_review','escalated','closed')").fetchall()
     gh = wt._gh_binary(gh_path or (cfg or {}).get("gh_path"))
     if not gh:
         raise SyncError(
@@ -105,8 +114,8 @@ def sync(cfg, con, gh_path=None):
 
             errors.append((r["id"], str(exc)))
             continue
-        status, review_state = classify(pr)
-        if not status:
+        status, review_state = classify(pr, r["status"])
+        if not status or status == r["status"]:
             continue
         merged_by = ((pr.get("mergedBy") or {}).get("login"))
         con.execute(
