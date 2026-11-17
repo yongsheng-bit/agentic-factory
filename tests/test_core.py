@@ -245,8 +245,54 @@ class TestSecretGate(unittest.TestCase):
         self.assertTrue(gates.check(self.dir)["ok"])
 
     def test_skips_vendor_dirs(self):
-        self._write("node_modules/pkg/x.js", "var k='AKIAIOSFODNN7EXAMPLE'\n")
+        self._write("node_modules/pkg/x.js", "var k='" + "AKIA" + "X" * 16 + "'\n")
         self.assertTrue(gates.check(self.dir)["ok"])
+
+    # --- diff-scoped scanning ------------------------------------------------
+    # The first real ticket died on "SECRET FOUND tests/fake_agent.py" - a
+    # fixture that already sat on main. A PR gate must judge what the PR adds.
+    FAKE_AKIA = "AKIA" + "Q1" * 8
+
+    def _diff(self, body):
+        return ("diff --git a/app.py b/app.py\n"
+                "--- a/app.py\n"
+                "+++ b/app.py\n"
+                "@@ -1,2 +1,3 @@\n" + body + "\n")
+
+    def test_diff_scope_catches_added_secret(self):
+        diff = self._diff(" def add(a, b):\n"
+                          f"+    KEY = '{self.FAKE_AKIA}'\n"
+                          "     return a + b\n")
+        found = gates.scan_added(diff)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["file"], "app.py")
+        self.assertEqual(found[0]["line"], 2)
+
+    def test_diff_scope_ignores_context_and_removed_lines(self):
+        # A key on an unchanged line is not this PR's doing; a key on a removed
+        # line is this PR deleting one - good news, not a finding.
+        diff = self._diff(f" KEY = '{self.FAKE_AKIA}'\n"
+                          f"-OLD = '{self.FAKE_AKIA}'\n"
+                          " return a + b\n")
+        self.assertEqual(gates.scan_added(diff), [])
+
+    def test_diff_scope_line_numbers_follow_the_hunk(self):
+        diff = ("diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+                "@@ -100,2 +100,4 @@\n"
+                " ctx\n"
+                f"+    KEY = '{self.FAKE_AKIA}'\n"
+                " ctx\n ctx\n")
+        self.assertEqual(gates.scan_added(diff)[0]["line"], 101)
+
+    def test_preexisting_fixture_does_not_block_every_pr(self):
+        # The regression: the tree contains a secret-looking fixture, but the
+        # change never touches it, so the gate must pass.
+        self._write("tests/fake_agent.py", "KEY = '" + self.FAKE_AKIA + "'\n")
+        diff = self._diff(" def add(a, b):\n+    return a + b  # sum\n")
+        self.assertFalse(gates.check(self.dir)["ok"], "tree scan should still see it")
+        res = gates.check(self.dir, diff=diff)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["scope"], "diff")
 
 
 class TestCommitAll(unittest.TestCase):

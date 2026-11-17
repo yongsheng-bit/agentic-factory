@@ -38,6 +38,45 @@ def _which(cmd):
     return shutil.which(cmd)
 
 
+def added_lines(diff):
+    """Yield (file, line_no, text) for every line a unified diff ADDS.
+
+    A PR gate should scan what the PR introduces. Scanning the whole checkout
+    instead turns any pre-existing fixture - including the fake AWS key in this
+    repo's own secrets-gate test - into a finding that blocks every future PR
+    from that repo forever.
+    """
+    out, cur, ln = [], None, 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            cur = raw[4:].strip()
+            if cur.startswith("b/"):
+                cur = cur[2:]
+        elif raw.startswith("@@"):
+            m = re.search(r"\+(\d+)", raw)
+            ln = int(m.group(1)) - 1 if m else 0
+        elif raw.startswith("+++") or raw.startswith("---"):
+            continue
+        elif raw.startswith("+"):
+            ln += 1
+            out.append((cur, ln, raw[1:]))
+        elif not raw.startswith("-"):
+            ln += 1
+    return out
+
+
+def scan_added(diff):
+    """Secret findings restricted to the lines a diff adds."""
+    findings = []
+    for f, line, text in added_lines(diff):
+        for rx, why in SECRET_PATTERNS:
+            m = rx.search(text)
+            if m:
+                findings.append({"tool": "regex", "reason": why, "file": f,
+                                 "line": line, "match": m.group(0)[:12] + "..."})
+    return findings
+
+
 def scan_secrets(root):
     """Return list of findings. Uses gitleaks when available, regex always."""
     findings = []
@@ -96,14 +135,21 @@ def scan_dependencies(root):
     return findings, tools
 
 
-def check(root, fail_on_secret=True):
-    """Run the gate. Returns dict with ok + findings."""
+def check(root, diff=None, fail_on_secret=True):
+    """Run the gate. Returns dict with ok + findings.
+
+    With `diff` (the PR's own unified diff) only the added lines are scanned -
+    that is what this change introduces. Without it the whole tree is walked,
+    which is the right thing for `factory audit` and the wrong thing for a PR
+    gate: a fixture that already exists on main would block every PR forever.
+    """
     root = os.path.abspath(root)
-    secrets = scan_secrets(root)
+    secrets = scan_added(diff) if diff is not None else scan_secrets(root)
     deps, tools = scan_dependencies(root)
     return {
         "ok": not (secrets and fail_on_secret),
         "secrets": secrets,
+        "scope": "diff" if diff is not None else "tree",
         "dependencies": deps,
         "tools": tools or ["regex-secret-scanner"],
     }

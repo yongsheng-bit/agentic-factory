@@ -98,8 +98,16 @@ def process_once(cfg, con, dry=False):
             return "retry (empty diff)"
         keep_branch = True
 
-        # --- security gate: fail closed on secrets -------------------------
-        gate = gates.check(path)
+        # --- the diff is the input to every check below ---------------------
+        # Computed once, against the SHA captured before the commit: after the
+        # commit, HEAD-vs-HEAD is empty and every gate would read nothing.
+        diff_text = wt.diff_text(path, base=base_sha)
+
+        # --- security gate: fail closed on secrets this change ADDS --------
+        # Scoped to added lines on purpose. Scanning the whole checkout makes
+        # a fixture that already sits on main (this repo's own fake AWS key)
+        # block every future PR from that repo.
+        gate = gates.check(path, diff=diff_text)
         if not gate["ok"]:
             f = gate["secrets"][0]
             # Do not keep the branch: the secret is in that commit object.
@@ -110,7 +118,7 @@ def process_once(cfg, con, dry=False):
 
         # --- blast radius from the real diff, not the agent's summary ------
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
-        if nfiles == 0:
+        if nfiles == 0 or not diff_text.strip():
             # A successful commit with an empty diff-vs-base means we cannot see
             # what changed. Never rate an unreadable diff "low" - that is the
             # fail-open path that auto-merges whatever the gate could not read.
@@ -118,7 +126,7 @@ def process_once(cfg, con, dry=False):
                              "cannot classify diff (git returned no changes after commit)")
         level, reason = blastmod.classify(
             wt.changed_files(path, base=base_sha),
-            added, deleted, wt.diff_text(path, base=base_sha),
+            added, deleted, diff_text,
             cfg=cfg.get("blast"))
         dbmod.set_blast(con, ticket["id"], level, reason, branch=branch)
 
