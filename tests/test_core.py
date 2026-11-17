@@ -935,6 +935,70 @@ class TestTierCommand(unittest.TestCase):
         self.assertIsNone(dbmod.get_ticket(con, tid)["tier"])
 
 
+class TestStatusTiers(unittest.TestCase):
+    """`factory status` must show which tier actually did the work.
+
+    Escalation is the routing rule that decides cost and quality, so a daily
+    view that hides it makes the strong tier look like a mystery. The counts
+    come from the runs table, tier_reason LIKE 'escalated%' being the same
+    marker the router writes when it promotes a retry.
+    """
+
+    def _env(self):
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db}, fh)
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        def run(*argv):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, *argv])
+            return buf.getvalue()
+
+        return con, run
+
+    def _seed(self, con, runs):
+        for i, (tier, reason) in enumerate(runs):
+            tid = dbmod.add_ticket(con, f"ticket {i}")
+            rid = dbmod.start_run(con, tid, 1, tier=tier, tier_reason=reason)
+            dbmod.end_run(con, rid, "ok", 0.01, "fine")
+
+    def test_counts_cheap_strong_and_escalations(self):
+        con, run = self._env()
+        self._seed(con, [("cheap", "default")] * 8
+                   + [("strong", "explicit override")]
+                   + [("strong", "escalated after 1 failed attempt(s)")] * 2)
+        out = run("status")
+        self.assertIn("tiers      : 8 cheap / 3 strong "
+                      "(2 escalated after failure)", out)
+
+    def test_no_runs_prints_zeros(self):
+        con, run = self._env()
+        out = run("status")
+        self.assertIn("tiers      : 0 cheap / 0 strong "
+                      "(0 escalated after failure)", out)
+
+    def test_runs_without_a_tier_are_not_escalations(self):
+        con, run = self._env()
+        tid = dbmod.add_ticket(con, "legacy row")
+        dbmod.end_run(con, dbmod.start_run(con, tid, 1), "ok", 0.01, "no tier")
+        self.assertEqual(dbmod.tier_mix(con),
+                         {"cheap": 0, "strong": 0, "escalated": 0})
+        self.assertIn("tiers      : 0 cheap / 0 strong "
+                      "(0 escalated after failure)", run("status"))
+
+
 class TestNoComments(unittest.TestCase):
     """The no-comments rule must hold for the whole repo, not by memory."""
 

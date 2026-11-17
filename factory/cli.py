@@ -112,6 +112,10 @@ def cmd_status(args):
           f"${float(cfg.get('daily_budget_usd', 20)):.2f}")
     print(f"tickets    : {json.dumps(counts) if counts else '(none)'}")
 
+    mix = dbmod.tier_mix(con)
+    print(f"tiers      : {mix['cheap']} cheap / {mix['strong']} strong "
+          f"({mix['escalated']} escalated after failure)")
+
     done = con.execute("SELECT COUNT(*) c FROM tickets WHERE status='merged'").fetchone()["c"]
     unreviewed = con.execute(
         "SELECT COUNT(*) c FROM tickets WHERE status='merged' "
