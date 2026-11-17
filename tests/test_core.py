@@ -295,6 +295,55 @@ class TestSecretGate(unittest.TestCase):
         self.assertEqual(res["scope"], "diff")
 
 
+class TestPrIsReal(unittest.TestCase):
+    """`pr_open` in the dashboard must mean a reviewer can click a link."""
+
+    def test_missing_gh_raises_instead_of_a_fake_success(self):
+        from factory import worktree as wt
+        orig, wt._gh_binary = wt._gh_binary, lambda cfg_path=None: None
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                wt.open_pr(".", "b", "t", "body")
+            self.assertIn("no PR could be opened", str(cm.exception))
+        finally:
+            wt._gh_binary = orig
+
+    def test_gh_exit_zero_without_url_is_a_failure(self):
+        from factory import worktree as wt
+
+        class Done:
+            returncode, stdout, stderr = 0, "warning: something\n", ""
+
+        orig_bin, orig_run = wt._gh_binary, wt.subprocess.run
+        wt._gh_binary = lambda cfg_path=None: "gh"
+        wt.subprocess.run = lambda *a, **k: Done()
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                wt.open_pr(".", "b", "t", "body")
+            self.assertIn("no url", str(cm.exception))
+        finally:
+            wt._gh_binary, wt.subprocess.run = orig_bin, orig_run
+
+    def test_url_is_persisted_and_migrated(self):
+        # An existing factory.db predates pr_url; CREATE TABLE IF NOT EXISTS
+        # would leave it missing and the first set_pr would blow up.
+        con = fresh_db(self)
+        con.execute("CREATE TABLE old_tickets (id INTEGER PRIMARY KEY, title TEXT)")
+        con.execute("INSERT INTO old_tickets VALUES (1, 'x')")
+        con.execute("DROP TABLE tickets")
+        con.execute("CREATE TABLE tickets (id INTEGER PRIMARY KEY, title TEXT,"
+                    " status TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0,"
+                    " max_retries INTEGER DEFAULT 3, budget_usd REAL DEFAULT 1,"
+                    " spent_usd REAL DEFAULT 0, created_at REAL DEFAULT 0,"
+                    " updated_at REAL DEFAULT 0)")
+        con.execute("INSERT INTO tickets (id, title) VALUES (1, 'legacy')")
+        dbmod.init(con)
+        self.assertIn("pr_url", {r["name"] for r in con.execute("PRAGMA table_info(tickets)")})
+        dbmod.set_pr(con, 1, "https://example.invalid/pull/1")
+        self.assertEqual(con.execute("SELECT pr_url FROM tickets WHERE id=1").fetchone()["pr_url"],
+                         "https://example.invalid/pull/1")
+
+
 class TestCommitAll(unittest.TestCase):
     """commit_all runs real git, so it is the piece most likely to differ
     between the dev machine and CI. The first real run on Linux proved that."""

@@ -142,12 +142,14 @@ def process_once(cfg, con, dry=False):
             try:
                 wt.push_branch(path, branch, cfg.get("remote", "origin"))
                 pr_url = wt.open_pr(path, branch, f"{ticket['ref'] or ''} {ticket['title']}".strip(),
-                                    body, base=cfg.get("pr_base", "main"))
+                                    body, base=cfg.get("pr_base", "main"),
+                                    gh_path=cfg.get("gh_path"))
             except Exception as exc:
                 # A commit that never reached a remote is invisible: nobody
                 # reviews it, no CI runs, and the ticket would sit in the
                 # dashboard as pr_open forever. Escalate instead.
                 return _escalate(con, ticket, f"push/PR failed: {exc}")
+            dbmod.set_pr(con, ticket["id"], pr_url)
 
         if level == "high":
             dbmod.finish(con, ticket["id"], "needs_review")
@@ -156,7 +158,7 @@ def process_once(cfg, con, dry=False):
             return "needs_review"
 
         dbmod.finish(con, ticket["id"], "pr_open")
-        return f"pr_open {pr_url or branch}"
+        return f"pr_open {pr_url or '(push disabled - branch ' + branch + ' is local only)'}"
 
     except Exception as exc:
         return _escalate(con, ticket, f"worker error: {exc}")
@@ -166,8 +168,11 @@ def process_once(cfg, con, dry=False):
                 # Keep the branch only if it holds a real commit; a leftover
                 # branch makes the next retry fail with "already exists".
                 wt.remove(repo, path, branch=None if keep_branch else branch)
-            except Exception:
-                pass
+            except Exception as exc:
+                # A worktree we could not delete survives into the next run and
+                # fails `worktree add` with "already exists". Silence here cost
+                # a whole debugging cycle; say it out loud instead.
+                print(f"WARNING: could not clean worktree {path}: {exc}")
 
 
 def loop(cfg, con, dry=False, idle_sleep=15):

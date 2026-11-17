@@ -232,20 +232,43 @@ def push_branch(path, branch, remote="origin"):
     _git(["push", "-u", remote, branch], cwd=path)
 
 
-def open_pr(path, branch, title, body, base="main"):
-    """Open a PR with gh. Returns the PR url, or None if gh is not installed.
-
-    Raises when gh IS installed but the call failed. Returning None there was a
-    lie one level up: the worker marked the ticket pr_open and printed the
-    branch name, so a failed PR looked exactly like a successful one.
-    """
+def _gh_binary(cfg_path=None):
+    """Locate the gh CLI. A config path wins, then PATH, then the per-user
+    Windows install location (which is NOT on PATH for a service-style run)."""
     import shutil as _sh
-    if not _sh.which("gh"):
-        return None
-    r = subprocess.run(["gh", "pr", "create", "--head", branch, "--base", base,
+    for cand in (cfg_path,
+                 os.environ.get("LOCALAPPDATA") and
+                 os.path.join(os.environ["LOCALAPPDATA"], "Programs", "gh", "bin",
+                              "gh.exe"),
+                 ):
+        if cand and os.path.exists(cand):
+            return cand
+    return _sh.which("gh")
+
+
+def open_pr(path, branch, title, body, base="main", gh_path=None):
+    """Open a PR with gh and return its url.
+
+    Raises whenever no PR was opened. Returning None used to be the polite
+    option and it was a lie one level up: the worker marked the ticket
+    pr_open and printed the branch name, so "gh is not installed" looked
+    identical to "the PR is waiting for review" - a commit on a remote with
+    no reviewer and no CI.
+    """
+    gh = _gh_binary(gh_path)
+    if not gh:
+        raise RuntimeError(
+            "gh CLI not found, so no PR could be opened. Install gh or set "
+            '"gh_path" in factory.json. The branch was pushed; open the PR '
+            "by hand and fix the config before the next run.")
+    r = subprocess.run([gh, "pr", "create", "--head", branch, "--base", base,
                         "--title", title, "--body", body],
-                       cwd=path, capture_output=True, text=True, timeout=300)
+                       cwd=path, capture_output=True, text=True, timeout=300,
+                       encoding="utf-8", errors="replace")
     if r.returncode != 0:
-        detail = (r.stderr or r.stdout or "").strip()
+        detail = ((r.stderr or "") + (r.stdout or "")).strip()
         raise RuntimeError(f"gh pr create failed ({r.returncode}): {detail[:400]}")
-    return r.stdout.strip()
+    url = (r.stdout or "").strip().splitlines()[-1].strip() if (r.stdout or "").strip() else ""
+    if not url.startswith("http"):
+        raise RuntimeError(f"gh pr create returned no url: {(r.stdout or '')[:200]!r}")
+    return url

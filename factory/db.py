@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     blast        TEXT,
     blast_reason TEXT,
     branch       TEXT,
+    pr_url       TEXT,
     created_at   REAL    NOT NULL,
     updated_at   REAL    NOT NULL
 );
@@ -66,6 +67,13 @@ def connect(path: str) -> sqlite3.Connection:
 
 def init(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
+    # CREATE TABLE IF NOT EXISTS never touches an existing table, so columns
+    # added after first release have to be migrated or every older factory.db
+    # fails on the first write that names them.
+    have = {r["name"] for r in con.execute("PRAGMA table_info(tickets)")}
+    for col in ("pr_url",):
+        if col not in have:
+            con.execute(f"ALTER TABLE tickets ADD COLUMN {col} TEXT")
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
 
@@ -125,6 +133,13 @@ def set_blast(con, ticket_id, level, reason, branch=None):
         "UPDATE tickets SET blast=?, blast_reason=?, branch=COALESCE(?, branch),"
         " updated_at=? WHERE id=?",
         (level, reason, branch, time.time(), ticket_id))
+
+
+def set_pr(con, ticket_id, url):
+    """Record the PR link. The dashboard's `pr_open` status is worthless
+    without something a human can click."""
+    con.execute("UPDATE tickets SET pr_url=?, updated_at=? WHERE id=?",
+                (url, time.time(), ticket_id))
 
 
 def finish(con, ticket_id, status, detail=""):
