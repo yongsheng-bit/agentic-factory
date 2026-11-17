@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """CI-side blast-radius check. Reads changed paths from FILES and numstat.txt.
 
 Exit codes: 0 = low/medium (CI green), 2 = high (surfaced as a failure so a
@@ -10,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from factory.blast import classify  # noqa: E402
+from factory.blast import classify
 
 
 def main():

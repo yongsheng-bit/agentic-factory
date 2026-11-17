@@ -32,10 +32,8 @@ PR_FIELDS = ("number,state,mergedAt,mergedBy,mergeCommit,reviews,mergeStateStatu
 _URL = re.compile(r"^https?://[^/]+/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/"
                   r"(?P<number>\d+)(?:[/?#].*)?$")
 
-
 class SyncError(RuntimeError):
     pass
-
 
 def parse_pr_url(url):
     """(owner, repo, number) from a PR URL, or raise.
@@ -49,7 +47,6 @@ def parse_pr_url(url):
         raise SyncError(f"not a pull request url: {url!r}")
     return m.group("owner"), m.group("repo"), int(m.group("number"))
 
-
 def _epoch(iso):
     """ISO8601 from GitHub ('2026-11-17T13:50:36Z') -> epoch seconds."""
     if not iso:
@@ -62,7 +59,6 @@ def _epoch(iso):
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.timestamp()
 
-
 def classify(pr):
     """(new_status, review_state) from a PR payload. None status = no change."""
     state = (pr.get("state") or "").upper()
@@ -73,7 +69,6 @@ def classify(pr):
     if state == "CLOSED":
         return "closed", "unreviewed"
     return None, None
-
 
 def fetch_pr(gh, owner, repo, number):
     p = subprocess.run(
@@ -87,7 +82,6 @@ def fetch_pr(gh, owner, repo, number):
         return json.loads(p.stdout)
     except json.JSONDecodeError as exc:
         raise SyncError(f"gh returned unparseable json for {owner}/{repo}#{number}: {exc}")
-
 
 def sync(cfg, con, gh_path=None):
     """Update every ticket that has a PR. Returns (changes, errors)."""
@@ -107,9 +101,7 @@ def sync(cfg, con, gh_path=None):
             owner, repo, number = parse_pr_url(r["pr_url"])
             pr = fetch_pr(gh, owner, repo, number)
         except SyncError as exc:
-            # A ticket that could not be checked keeps its old status. Marking
-            # something merged because a lookup failed is exactly the kind of
-            # lie this module exists to prevent.
+
             errors.append((r["id"], str(exc)))
             continue
         status, review_state = classify(pr)

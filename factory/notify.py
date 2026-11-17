@@ -25,6 +25,6 @@ def notify(title, text, webhook=None, dry=False):
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=20) as r:
             return 200 <= r.status < 300
-    except Exception as exc:  # never let notification failure kill a run
+    except Exception as exc:
         print(f"[notify] webhook failed: {exc}", flush=True)
         return False

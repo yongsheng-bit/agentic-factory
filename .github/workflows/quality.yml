@@ -1,8 +1,5 @@
 name: quality
 
-# The Build & Quality Pipeline from the diagram. Everything here is
-# off-the-shelf: the factory's job is to make these checks non-negotiable,
-# not to reinvent them. Steps self-skip when the repo has no matching manifest.
 
 on:
   pull_request:
@@ -14,7 +11,6 @@ permissions:
   pull-requests: write
 
 jobs:
-  # --- supply-chain gate (the diagram had none) --------------------------
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -45,7 +41,6 @@ jobs:
           pip install --quiet pip-audit
           pip-audit -r requirements.txt
 
-  # --- code quality ------------------------------------------------------
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -61,6 +56,10 @@ jobs:
           FILES=$(git diff --name-only "origin/$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD~1)
           git diff --numstat "origin/$BASE"...HEAD 2>/dev/null > numstat.txt || git diff --numstat HEAD~1 > numstat.txt
           FILES="$FILES" python tools/blast_check.py
+
+      - name: no comments in code
+        if: hashFiles('**/*.py')
+        run: python tools/no_comments_check.py
 
       - name: complexity
         if: hashFiles('**/*.py')
@@ -82,7 +81,6 @@ jobs:
       - name: duplication
         run: npx --yes jscpd --min-lines 10 --min-tokens 80 --reporters console . || true
 
-  # --- tests -------------------------------------------------------------
   e2e:
     runs-on: ubuntu-latest
     steps:

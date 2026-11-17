@@ -53,7 +53,7 @@ def process_once(cfg, con, dry=False):
     attempt = int(ticket["attempts"]) + 1
 
     path = branch = None
-    keep_branch = False          # only keep a branch once it holds a real commit
+    keep_branch = False
     try:
         path, branch = wt.create(repo, ticket["id"], ticket["ref"],
                                  base=cfg.get("base_branch", "HEAD"))
@@ -86,9 +86,7 @@ def process_once(cfg, con, dry=False):
             dbmod.finish(con, ticket["id"], "queued")
             return f"retry {dbmod.attempt_of(con, ticket['id'])}/{ticket['max_retries']}"
 
-        # Capture the pre-commit SHA. Classifying against HEAD *after* the
-        # commit shows an empty diff and rates every change "low" - which
-        # silently disables the human gate. Caught by tests/smoke.py.
+
         base_sha = wt.head_sha(path)
         if not wt.commit_all(path, f"{ticket['ref'] or 'ticket ' + str(ticket['id'])}: {ticket['title']}"):
             dbmod.bump_attempt(con, ticket["id"])
@@ -98,30 +96,23 @@ def process_once(cfg, con, dry=False):
             return "retry (empty diff)"
         keep_branch = True
 
-        # --- the diff is the input to every check below ---------------------
-        # Computed once, against the SHA captured before the commit: after the
-        # commit, HEAD-vs-HEAD is empty and every gate would read nothing.
+
         diff_text = wt.diff_text(path, base=base_sha)
 
-        # --- security gate: fail closed on secrets this change ADDS --------
-        # Scoped to added lines on purpose. Scanning the whole checkout makes
-        # a fixture that already sits on main (this repo's own fake AWS key)
-        # block every future PR from that repo.
+
         gate = gates.check(path, diff=diff_text)
         if not gate["ok"]:
             f = gate["secrets"][0]
-            # Do not keep the branch: the secret is in that commit object.
+
             keep_branch = False
             return _escalate(con, ticket,
                              f"SECRET FOUND {f.get('file')}:{f.get('line')} "
                              f"({f.get('reason')}) - PR blocked")
 
-        # --- blast radius from the real diff, not the agent's summary ------
+
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
         if nfiles == 0 or not diff_text.strip():
-            # A successful commit with an empty diff-vs-base means we cannot see
-            # what changed. Never rate an unreadable diff "low" - that is the
-            # fail-open path that auto-merges whatever the gate could not read.
+
             return _escalate(con, ticket,
                              "cannot classify diff (git returned no changes after commit)")
         level, reason = blastmod.classify(
@@ -145,9 +136,7 @@ def process_once(cfg, con, dry=False):
                                     body, base=cfg.get("pr_base", "main"),
                                     gh_path=cfg.get("gh_path"))
             except Exception as exc:
-                # A commit that never reached a remote is invisible: nobody
-                # reviews it, no CI runs, and the ticket would sit in the
-                # dashboard as pr_open forever. Escalate instead.
+
                 return _escalate(con, ticket, f"push/PR failed: {exc}")
             dbmod.set_pr(con, ticket["id"], pr_url)
 
@@ -165,13 +154,10 @@ def process_once(cfg, con, dry=False):
     finally:
         if path and not cfg.get("keep_worktrees", False):
             try:
-                # Keep the branch only if it holds a real commit; a leftover
-                # branch makes the next retry fail with "already exists".
+
                 wt.remove(repo, path, branch=None if keep_branch else branch)
             except Exception as exc:
-                # A worktree we could not delete survives into the next run and
-                # fails `worktree add` with "already exists". Silence here cost
-                # a whole debugging cycle; say it out loud instead.
+
                 print(f"WARNING: could not clean worktree {path}: {exc}")
 
 

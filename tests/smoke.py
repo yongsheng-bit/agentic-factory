@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """End-to-end smoke test: real git, real worktrees, fake agent, no network.
 
 Run:  python tests/smoke.py
@@ -16,8 +15,8 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from factory import db as dbmod          # noqa: E402
-from factory import worker               # noqa: E402
+from factory import db as dbmod
+from factory import worker
 
 FAKE = str(ROOT / "tests" / "fake_agent.py")
 PY = sys.executable
@@ -82,14 +81,13 @@ def main():
 
     ok, t, cost, branches = run_scenario("happy path", "ok", "pr_open", "low")
     results.append(ok)
-    results.append(cost > 0)          # cost captured from agent JSON
+    results.append(cost > 0)
     print(f"{'PASS' if cost > 0 else 'FAIL'}  cost parsed from agent output: ${cost:.4f}")
     results.append("agent/" in branches)
     print(f"{'PASS' if 'agent/' in branches else 'FAIL'}  branch kept for PR: "
           f"{branches.splitlines()[:1]}")
 
-    # Regression: the orchestrator's own prompt file must never end up in the
-    # agent's commit (it did, in v1, because it was written inside the checkout).
+
     repo = make_repo()
     db = os.path.join(tempfile.mkdtemp(prefix="smoke-db-"), "f.db")
     con = dbmod.connect(db)
@@ -118,7 +116,7 @@ def main():
     ok, _, _, _ = run_scenario("empty diff -> escalate", "empty", "escalated", runs=3)
     results.append(ok)
 
-    # --- kill switch -----------------------------------------------------
+
     repo = make_repo()
     db = os.path.join(tempfile.mkdtemp(prefix="smoke-db-"), "f.db")
     con = dbmod.connect(db)
@@ -133,7 +131,7 @@ def main():
     results.append(worker.process_once(cfg, con) != "paused")
     print("PASS  resume lets work through")
 
-    # --- daily budget ----------------------------------------------------
+
     repo2 = make_repo()
     db2 = os.path.join(tempfile.mkdtemp(prefix="smoke-db-"), "f.db")
     con2 = dbmod.connect(db2)
@@ -144,7 +142,7 @@ def main():
     results.append(out == "budget" and dbmod.is_paused(con2))
     print(f"{'PASS' if out == 'budget' else 'FAIL'}  daily budget auto-pauses queue ({out})")
 
-    # --- two tickets get isolated worktrees ------------------------------
+
     repo3 = make_repo()
     db3 = os.path.join(tempfile.mkdtemp(prefix="smoke-db-"), "f.db")
     con3 = dbmod.connect(db3)
@@ -158,7 +156,7 @@ def main():
     results.append(len(br) == 2)
     print(f"{'PASS' if len(br) == 2 else 'FAIL'}  per-ticket branches isolated: {br}")
 
-    # --- secret gate does not block a clean repo -------------------------
+
     results.append(not any(r is False for r in results))
 
     print("\n" + ("ALL SMOKE TESTS PASSED" if all(results) else "SMOKE TESTS FAILED"))

@@ -3,6 +3,7 @@
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import unittest
 
@@ -58,8 +59,7 @@ class TestBlast(unittest.TestCase):
         self.assertIn("destructive", why)
 
     def test_unknown_defaults_away_from_low(self):
-        # 3 files, tiny diff, no triggers -> low is correct; but a single
-        # migration file must never be low.
+
         self.assertNotEqual(blastmod.classify(["db/migrate/x.sql"])[0], "low")
 
     def test_parse_name_status(self):
@@ -188,7 +188,7 @@ class TestAgent(unittest.TestCase):
                          "strong")
 
     def test_prompt_written_outside_the_worktree(self):
-        # A prompt inside the checkout gets committed by `git add -A`.
+
         wd = tempfile.mkdtemp()
         out = tempfile.mkdtemp()
         ticket = {"id": 7, "ref": "X-1", "title": "t", "body": "b", "max_retries": 3}
@@ -249,9 +249,7 @@ class TestSecretGate(unittest.TestCase):
         self._write("node_modules/pkg/x.js", "var k='" + "AKIA" + "X" * 16 + "'\n")
         self.assertTrue(gates.check(self.dir)["ok"])
 
-    # --- diff-scoped scanning ------------------------------------------------
-    # The first real ticket died on "SECRET FOUND tests/fake_agent.py" - a
-    # fixture that already sat on main. A PR gate must judge what the PR adds.
+
     FAKE_AKIA = "AKIA" + "Q1" * 8
 
     def _diff(self, body):
@@ -270,8 +268,7 @@ class TestSecretGate(unittest.TestCase):
         self.assertEqual(found[0]["line"], 2)
 
     def test_diff_scope_ignores_context_and_removed_lines(self):
-        # A key on an unchanged line is not this PR's doing; a key on a removed
-        # line is this PR deleting one - good news, not a finding.
+
         diff = self._diff(f" KEY = '{self.FAKE_AKIA}'\n"
                           f"-OLD = '{self.FAKE_AKIA}'\n"
                           " return a + b\n")
@@ -286,8 +283,7 @@ class TestSecretGate(unittest.TestCase):
         self.assertEqual(gates.scan_added(diff)[0]["line"], 101)
 
     def test_preexisting_fixture_does_not_block_every_pr(self):
-        # The regression: the tree contains a secret-looking fixture, but the
-        # change never touches it, so the gate must pass.
+
         self._write("tests/fake_agent.py", "KEY = '" + self.FAKE_AKIA + "'\n")
         diff = self._diff(" def add(a, b):\n+    return a + b  # sum\n")
         self.assertFalse(gates.check(self.dir)["ok"], "tree scan should still see it")
@@ -326,8 +322,7 @@ class TestPrIsReal(unittest.TestCase):
             wt._gh_binary, wt.subprocess.run = orig_bin, orig_run
 
     def test_url_is_persisted_and_migrated(self):
-        # An existing factory.db predates pr_url; CREATE TABLE IF NOT EXISTS
-        # would leave it missing and the first set_pr would blow up.
+
         con = fresh_db(self)
         con.execute("CREATE TABLE old_tickets (id INTEGER PRIMARY KEY, title TEXT)")
         con.execute("INSERT INTO old_tickets VALUES (1, 'x')")
@@ -364,12 +359,12 @@ class TestCommitAll(unittest.TestCase):
         self.g = git
         git("init", "-q", "-b", "main")
         with open(os.path.join(self.dir, ".gitignore"), "w") as fh:
-            fh.write(".factory-tmp/\n")   # the sandbox scratch dir; see the regression test
+            fh.write(".factory-tmp/\n")
         with open(os.path.join(self.dir, "app.py"), "w") as fh:
             fh.write("print(1)\n")
         os.makedirs(os.path.join(self.dir, "build"))
         with open(os.path.join(self.dir, "build", "out.js"), "w") as fh:
-            fh.write("v1\n")             # a repo that TRACKS build/ on purpose
+            fh.write("v1\n")
         git("add", "-A")
         git("commit", "-qm", "seed")
 
@@ -393,16 +388,13 @@ class TestCommitAll(unittest.TestCase):
         self.assertEqual(self._committed(), ["new_test.py"])
 
     def test_tracked_artifact_modification_is_still_committed(self):
-        # Unstaging artifacts must never stage the DELETION of a file the repo
-        # tracks deliberately - only newly added files are dropped.
+
         self._touch("build/out.js", "v2\n")
         self.assertTrue(worktree.commit_all(self.dir, "rebuild"))
         self.assertEqual(self._committed(), ["build/out.js"])
 
     def test_ignored_scratch_dir_does_not_break_the_add(self):
-        # Regression: :(exclude) pathspecs naming a gitignored directory make
-        # `git add` exit 1, which escalated every ticket. The sandbox writes
-        # its scratch into .factory-tmp, so this fires on every real run.
+
         self._touch(".factory-tmp/scratch.txt", "junk")
         self._touch("real.py", "print(2)\n")
         self.assertTrue(worktree.commit_all(self.dir, "add real"))
@@ -504,8 +496,7 @@ class TestSync(unittest.TestCase):
         self.assertEqual(errors, [])
         row = self.con.execute("SELECT * FROM tickets WHERE id=1").fetchone()
         self.assertEqual(row["status"], "merged")
-        # No APPROVED review exists, so the merge went through the gate, not
-        # past a reviewer. Recording that is the whole point.
+
         self.assertEqual(row["review_state"], "admin-bypass")
         self.assertEqual(row["merged_by"], "boss")
         self.assertIsNotNone(row["merged_at"])
@@ -582,6 +573,24 @@ class TestCliSurface(unittest.TestCase):
         ns = cli.build_parser().parse_args(["sync", "--gh", "/usr/bin/gh"])
         self.assertEqual(ns.gh, "/usr/bin/gh")
         self.assertTrue(callable(ns.fn))
+
+
+class TestNoComments(unittest.TestCase):
+    """The no-comments rule must hold for the whole repo, not by memory."""
+
+    def test_repo_has_no_comments(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        sys.path.insert(0, os.path.join(root, "tools"))
+        import no_comments_check
+        hits = []
+        for base, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d not in no_comments_check.SKIP_DIRS]
+            for name in files:
+                if name.endswith(".py"):
+                    p = os.path.join(base, name)
+                    for line, text in no_comments_check.check(p):
+                        hits.append(f"{p}:{line}: {text[:60]}")
+        self.assertEqual(hits, [], "comments found:\n" + "\n".join(hits))
 
 
 if __name__ == "__main__":

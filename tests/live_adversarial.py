@@ -23,8 +23,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from factory import db as dbmod          # noqa: E402
-from factory import worker               # noqa: E402
+from factory import db as dbmod
+from factory import worker
 
 BASE = os.environ.get("LLM_BASE", "http://192.168.68.73:8080/v1")
 PY = sys.executable

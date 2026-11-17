@@ -12,8 +12,6 @@ import re
 import shutil
 import subprocess
 
-# Fallback scanner used when gitleaks is not installed. Deliberately broad:
-# a false positive that costs a human 10 seconds is cheaper than a leaked key.
 SECRET_PATTERNS = [
     (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key id"),
     (re.compile(r"(?i)aws_secret_access_key\s*[:=]\s*['\"][A-Za-z0-9/+=]{30,}"), "AWS secret key"),
