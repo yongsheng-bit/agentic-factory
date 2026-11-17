@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 
 
 class WorktreeError(RuntimeError):
@@ -18,15 +19,36 @@ class WorktreeError(RuntimeError):
 
 
 def _git(args, cwd=None):
-    r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=600)
+    """Run git, retrying children that were killed from OUTSIDE.
+
+    On Windows a spawned console app can be terminated by something that is
+    not git: antivirus scanning a freshly created worktree, a console Ctrl+C
+    reaching the process, a transient `.git/index.lock`. Those surface as
+    NTSTATUS termination codes (0xC000013A STATUS_CONTROL_C_EXIT, 0xC0000142
+    DLL_INIT_FAILED, ...) with empty stderr, or as git's 128 lock error.
+    Observed twice on this machine: `git add -A` returned 0xC000013A with no
+    output, while the identical call from a terminal and from a detached
+    probe returned 0. Treating that as a ticket failure is wrong; treating it
+    as unretryable is fragile.
+    """
+    killed = {0xC000013A, 0xC0000142, 0xC0000005, 0xC0000022}
+    for attempt in range(4):
+        r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=600)
+        rc = r.returncode
+        transient = ((rc is not None and (rc & 0xFFFFFFFF) in killed)
+                     or (rc == 128 and "index.lock" in (r.stderr or "")))
+        if not (transient and attempt < 3):
+            break
+        time.sleep(0.5 * (attempt + 1))
     if r.returncode != 0:
         # rc and stdout belong in the message: a real run died on
         # "git add -A: " with nothing after the colon, because git sometimes
         # fails with the explanation on stdout (or nowhere) and an empty
         # reason is undebuggable after the worktree is already gone.
         detail = (r.stderr.strip() or r.stdout.strip() or "(no output)")
-        raise WorktreeError(f"git {' '.join(args)}: rc={r.returncode} {detail[:400]}"
+        raise WorktreeError(f"git {' '.join(args)}: rc={r.returncode} "
+                            f"(0x{r.returncode & 0xFFFFFFFF:08X}) {detail[:400]}"
                             f" [cwd={cwd}]")
     return r.stdout
 
