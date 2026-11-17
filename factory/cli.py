@@ -28,7 +28,49 @@ def cmd_init(args):
     print(f"initialised {cfg['db']}")
 
 
+TIERS = ("cheap", "strong")
+
+
+def parse_tickets(text):
+    """Turn JSONL ticket text into rows, or name the first bad line.
+
+    Validation happens before anything is written, so a file with a typo on
+    line 40 imports zero tickets instead of thirty-nine: a half-imported batch
+    is worse than none, because the retry that fixes line 40 would duplicate
+    the first thirty-nine.
+    """
+    rows, bad = [], None
+    for num, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            bad = bad or f"line {num}: invalid JSON"
+            continue
+        if not isinstance(obj, dict):
+            bad = bad or f"line {num}: not a JSON object"
+            continue
+        title = obj.get("title")
+        if not (isinstance(title, str) and title.strip()):
+            bad = bad or f"line {num}: missing title"
+            continue
+        tier = obj.get("tier")
+        if tier is not None and tier not in TIERS:
+            bad = bad or f"line {num}: tier must be cheap or strong"
+            continue
+        rows.append({"title": title, "body": obj.get("body") or "",
+                     "tier": tier, "budget_usd": obj.get("budget_usd", 2.0),
+                     "retries": obj.get("retries", 3)})
+    return rows, bad
+
+
 def cmd_add(args):
+    if args.from_file:
+        return _add_from_file(args)
+    if not args.title:
+        print("add needs a title, or --from-file FILE")
+        sys.exit(2)
     _, con = _open(args)
     tid = dbmod.add_ticket(con, args.title, args.body or "", source=args.source,
                            ref=args.ref, budget_usd=args.budget,
@@ -37,6 +79,32 @@ def cmd_add(args):
         dbmod.set_blast(con, tid, args.blast, "set manually")
     route = f" (pinned to {args.tier} tier)" if args.tier else ""
     print(f"queued ticket {tid}{route}")
+
+
+def _add_from_file(args):
+    """Bulk import from JSONL: one ticket id per line, or nothing at all."""
+    _, con = _open(args)
+    try:
+        with open(args.from_file, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError as exc:
+        print(f"cannot read {args.from_file}: {exc.strerror or exc}")
+        sys.exit(1)
+    rows, bad = parse_tickets(text)
+    if bad:
+        print(f"{bad} - nothing imported")
+        sys.exit(1)
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        ids = [dbmod.add_ticket(con, r["title"], r["body"], source=args.source,
+                                budget_usd=r["budget_usd"], max_retries=r["retries"],
+                                tier=r["tier"]) for r in rows]
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    for tid in ids:
+        print(tid)
 
 
 def cmd_list(args):
@@ -222,7 +290,9 @@ def build_parser():
 
     a.add_parser("init").set_defaults(fn=cmd_init)
 
-    s = a.add_parser("add"); s.add_argument("title")
+    s = a.add_parser("add")
+    s.add_argument("title", nargs="?",
+                   help="omit when importing with --from-file")
     s.add_argument("--body", default=""); s.add_argument("--ref")
     s.add_argument("--source", default="manual")
     s.add_argument("--budget", type=float, default=2.0)
@@ -230,6 +300,8 @@ def build_parser():
     s.add_argument("--blast", choices=["low", "medium", "high"])
     s.add_argument("--tier", choices=["cheap", "strong"],
                    help="pin the model tier instead of letting the router decide")
+    s.add_argument("--from-file", dest="from_file", metavar="FILE",
+                   help="JSONL bulk import: one object per line, title required")
     s.set_defaults(fn=cmd_add)
 
     s = a.add_parser("list"); s.add_argument("--status"); s.set_defaults(fn=cmd_list)
