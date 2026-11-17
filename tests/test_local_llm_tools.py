@@ -7,6 +7,7 @@ A model that hallucinates a `git push` must not be able to produce one.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import io
 import json
@@ -214,6 +215,52 @@ class ToolSandboxTest(unittest.TestCase):
         parsed = json.loads(buf.getvalue().strip())
         self.assertEqual(parsed["input_tokens"], 100)
         self.assertEqual(parsed["status"], "completed")
+
+
+class TestBudgetGovernor(unittest.TestCase):
+    def test_cumulative_spend_alone_does_not_kill_the_run(self):
+        self.assertFalse(llm.exhausted(15000, 400, ceiling=100000,
+                                       cumulative=156000, cap=600000))
+
+    def test_per_call_context_still_stops_the_run(self):
+        self.assertTrue(llm.exhausted(99900, 200, ceiling=100000,
+                                      cumulative=1000, cap=600000))
+
+    def test_cumulative_cap_is_still_a_backstop(self):
+        self.assertTrue(llm.exhausted(1000, 10, ceiling=100000,
+                                      cumulative=700000, cap=600000))
+
+    def test_finished_run_is_kept(self):
+        self.assertEqual(llm.exit_code(True, []), 0)
+
+    def test_unfinished_run_with_changes_is_salvaged_not_discarded(self):
+        self.assertEqual(llm.exit_code(False, ["factory/cli.py"]), 0)
+
+    def test_unfinished_run_without_changes_is_discarded(self):
+        self.assertEqual(llm.exit_code(False, []), 1)
+
+    def test_defaults_come_from_the_environment(self):
+        def fresh_copy():
+            s = importlib.util.spec_from_file_location(
+                "local_llm_fresh", os.path.join(ROOT, "scripts", "local_llm.py"))
+            if s is None or s.loader is None:
+                self.fail("cannot load scripts/local_llm.py")
+            m = importlib.util.module_from_spec(s)
+            s.loader.exec_module(m)
+            return m
+
+        os.environ["LLM_MAX_TOKENS"] = "1234"
+        os.environ["LLM_MAX_CONTEXT"] = "5678"
+        try:
+            fresh = fresh_copy()
+            self.assertEqual(fresh.MAX_TOTAL_TOKENS, 1234)
+            self.assertEqual(fresh.MAX_CONTEXT_TOKENS, 5678)
+            self.assertTrue(fresh.exhausted(5000, 1000))
+            self.assertFalse(fresh.exhausted(100, 10, cumulative=1000))
+        finally:
+            del os.environ["LLM_MAX_TOKENS"]
+            del os.environ["LLM_MAX_CONTEXT"]
+            self.assertEqual(fresh_copy().MAX_TOTAL_TOKENS, llm.MAX_TOTAL_TOKENS)
 
 
 if __name__ == "__main__":
