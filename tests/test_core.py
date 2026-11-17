@@ -10,6 +10,7 @@ from factory import agent as agentmod
 from factory import blast as blastmod
 from factory import db as dbmod
 from factory import gates
+from factory import sync as syncmod
 from factory import worktree
 
 
@@ -448,6 +449,139 @@ class TestCommitIdentity(unittest.TestCase):
                 capture_output=True, text=True).stdout.strip()
         name, email = worktree.AGENT_IDENTITY
         self.assertEqual(who, f"{name}|{email}|{name}|{email}")
+
+
+class TestSync(unittest.TestCase):
+    """The queue must only move when GitHub says so, and must record HOW."""
+
+    def setUp(self):
+        self.con = fresh_db(self)
+        self.orig = syncmod.wt._gh_binary, syncmod.fetch_pr
+
+    def tearDown(self):
+        syncmod.wt._gh_binary, syncmod.fetch_pr = self.orig
+
+    def _fake(self, payloads):
+        syncmod.wt._gh_binary = lambda cfg_path=None: "gh"
+        calls = []
+
+        def fetch(gh, owner, repo, number):
+            calls.append((owner, repo, number))
+            p = payloads.get(number)
+            if isinstance(p, Exception):
+                raise p
+            return p
+
+        syncmod.fetch_pr = fetch
+        return calls
+
+    def test_url_parsing_and_rejects(self):
+        self.assertEqual(syncmod.parse_pr_url(
+            "https://github.com/acme/widget/pull/12"), ("acme", "widget", 12))
+        self.assertEqual(syncmod.parse_pr_url(
+            "https://github.com/acme/widget/pull/12/files"), ("acme", "widget", 12))
+        for bad in (None, "", "not a url", "https://github.com/acme/widget"):
+            with self.assertRaises(syncmod.SyncError):
+                syncmod.parse_pr_url(bad)
+
+    def test_classify(self):
+        approved = {"state": "MERGED", "reviews": [{"state": "COMMENTED"},
+                                                   {"state": "APPROVED"}]}
+        bypassed = {"state": "MERGED", "reviews": [{"state": "COMMENTED"}]}
+        self.assertEqual(syncmod.classify(approved), ("merged", "approved"))
+        self.assertEqual(syncmod.classify(bypassed), ("merged", "admin-bypass"))
+        self.assertEqual(syncmod.classify({"state": "CLOSED", "reviews": []}),
+                         ("closed", "unreviewed"))
+        self.assertEqual(syncmod.classify({"state": "OPEN", "reviews": []}), (None, None))
+
+    def test_sync_records_merged_and_how(self):
+        dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "t"),
+                     "https://github.com/acme/widget/pull/7")
+        self.con.execute("UPDATE tickets SET status='pr_open' WHERE id=1")
+        self._fake({7: {"state": "MERGED", "mergedAt": "2026-11-17T13:50:36Z",
+                        "mergedBy": {"login": "boss"}, "reviews": []}})
+        changes, errors = syncmod.sync({}, self.con)
+        self.assertEqual(errors, [])
+        row = self.con.execute("SELECT * FROM tickets WHERE id=1").fetchone()
+        self.assertEqual(row["status"], "merged")
+        # No APPROVED review exists, so the merge went through the gate, not
+        # past a reviewer. Recording that is the whole point.
+        self.assertEqual(row["review_state"], "admin-bypass")
+        self.assertEqual(row["merged_by"], "boss")
+        self.assertIsNotNone(row["merged_at"])
+        self.assertEqual(changes[0][:3], (1, "pr_open", "merged"))
+
+    def test_sync_leaves_open_and_unlinked_tickets_alone(self):
+        dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "open pr"),
+                     "https://github.com/acme/widget/pull/8")
+        dbmod.add_ticket(self.con, "no pr yet")
+        self.con.execute("UPDATE tickets SET status='pr_open' WHERE id=1")
+        self._fake({8: {"state": "OPEN", "reviews": []}})
+        changes, errors = syncmod.sync({}, self.con)
+        self.assertEqual((changes, errors), ([], []))
+        self.assertEqual([r["status"] for r in self.con.execute(
+            "SELECT status FROM tickets ORDER BY id")], ["pr_open", "queued"])
+
+    def test_failed_lookup_never_marks_a_ticket_merged(self):
+        dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "t"),
+                     "https://github.com/acme/widget/pull/9")
+        self.con.execute("UPDATE tickets SET status='pr_open' WHERE id=1")
+        self._fake({9: syncmod.SyncError("gh timed out")})
+        changes, errors = syncmod.sync({}, self.con)
+        self.assertEqual(changes, [])
+        self.assertEqual(len(errors), 1)
+        self.assertEqual(self.con.execute(
+            "SELECT status FROM tickets WHERE id=1").fetchone()["status"], "pr_open")
+
+    def test_missing_gh_raises_instead_of_guessing(self):
+        dbmod.set_pr(self.con, dbmod.add_ticket(self.con, "t"),
+                     "https://github.com/acme/widget/pull/1")
+        syncmod.wt._gh_binary = lambda cfg_path=None: None
+        with self.assertRaises(syncmod.SyncError):
+            syncmod.sync({}, self.con)
+
+    def test_legacy_db_gains_the_audit_columns(self):
+        con = fresh_db(self)
+        con.execute("DROP TABLE tickets")
+        con.execute("CREATE TABLE tickets (id INTEGER PRIMARY KEY, title TEXT,"
+                    " status TEXT DEFAULT 'queued', attempts INTEGER DEFAULT 0,"
+                    " max_retries INTEGER DEFAULT 3, budget_usd REAL DEFAULT 1,"
+                    " spent_usd REAL DEFAULT 0, created_at REAL DEFAULT 0,"
+                    " updated_at REAL DEFAULT 0)")
+        dbmod.init(con)
+        cols = {r["name"] for r in con.execute("PRAGMA table_info(tickets)")}
+        self.assertTrue({"pr_url", "review_state", "merged_by", "merged_at"} <= cols)
+
+
+class TestCliSurface(unittest.TestCase):
+    """The CLI must at least build.
+
+    A literal `%` in any help string makes argparse raise while *constructing*
+    the parser, which kills every subcommand - and a suite that only imports
+    the module and calls functions directly stays green while the tool is
+    completely unusable.
+    """
+
+    def _subcommands(self):
+        import argparse
+        from factory import cli
+        for action in cli.build_parser()._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                return action.choices
+        self.fail("no subcommands")
+
+    def test_every_subcommand_is_wired_to_a_handler(self):
+        choices = self._subcommands()
+        self.assertIn("sync", choices)
+        for name, sub in choices.items():
+            fn = sub.get_default("fn")
+            self.assertTrue(callable(fn), f"{name} has no handler")
+
+    def test_sync_parses(self):
+        from factory import cli
+        ns = cli.build_parser().parse_args(["sync", "--gh", "/usr/bin/gh"])
+        self.assertEqual(ns.gh, "/usr/bin/gh")
+        self.assertTrue(callable(ns.fn))
 
 
 if __name__ == "__main__":
