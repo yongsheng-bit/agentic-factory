@@ -70,11 +70,12 @@ def classify(pr):
         return "closed", "unreviewed"
     return None, None
 
-def fetch_pr(gh, owner, repo, number):
+def fetch_pr(gh, owner, repo, number, token=None):
     p = subprocess.run(
         [gh, "pr", "view", str(number), "--repo", f"{owner}/{repo}",
          "--json", PR_FIELDS],
-        capture_output=True, text=True, encoding="utf-8", errors="replace")
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=wt._token_env(token))
     if p.returncode != 0:
         raise SyncError(f"gh pr view {owner}/{repo}#{number}: "
                         f"{(p.stderr or p.stdout).strip()[:300]}")
@@ -99,7 +100,7 @@ def sync(cfg, con, gh_path=None):
     for r in rows:
         try:
             owner, repo, number = parse_pr_url(r["pr_url"])
-            pr = fetch_pr(gh, owner, repo, number)
+            pr = fetch_pr(gh, owner, repo, number, (cfg or {}).get("gh_token"))
         except SyncError as exc:
 
             errors.append((r["id"], str(exc)))

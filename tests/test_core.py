@@ -457,7 +457,7 @@ class TestSync(unittest.TestCase):
         syncmod.wt._gh_binary = lambda cfg_path=None: "gh"
         calls = []
 
-        def fetch(gh, owner, repo, number):
+        def fetch(gh, owner, repo, number, token=None):
             calls.append((owner, repo, number))
             p = payloads.get(number)
             if isinstance(p, Exception):
@@ -591,6 +591,42 @@ class TestNoComments(unittest.TestCase):
                     for line, text in no_comments_check.check(p):
                         hits.append(f"{p}:{line}: {text[:60]}")
         self.assertEqual(hits, [], "comments found:\n" + "\n".join(hits))
+
+
+class TestTokenPlumbing(unittest.TestCase):
+    def _auth(self, token, url=None, env=None):
+        from factory import worktree as wt
+        return wt._auth_env(dict(env or {}), token, url)
+
+    def test_token_travels_as_one_shot_config_not_argv(self):
+        import base64
+        env = self._auth("github_pat_test", "https://github.com/o/r.git")
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "http.https://github.com/.extraheader")
+        want = base64.b64encode(b"x-access-token:github_pat_test").decode()
+        self.assertEqual(env["GIT_CONFIG_VALUE_0"], "AUTHORIZATION: basic " + want)
+        self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
+
+    def test_host_comes_from_the_remote(self):
+        env = self._auth("t", "https://git.example.net:8443/o/r.git")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "http.https://git.example.net:8443/.extraheader")
+
+    def test_no_token_changes_nothing(self):
+        self.assertEqual(self._auth(None, "https://github.com/o/r.git"), {})
+
+    def test_existing_one_shot_config_is_not_clobbered(self):
+        env = self._auth("t", "https://github.com/o/r.git",
+                         {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "a.b",
+                          "GIT_CONFIG_VALUE_0": "c"})
+        self.assertEqual(env["GIT_CONFIG_COUNT"], "2")
+        self.assertEqual(env["GIT_CONFIG_KEY_1"], "http.https://github.com/.extraheader")
+        self.assertEqual(env["GIT_CONFIG_KEY_0"], "a.b")
+
+    def test_gh_gets_the_token_by_env(self):
+        from factory import worktree as wt
+        env = wt._token_env("github_pat_test")
+        self.assertEqual(env["GH_TOKEN"], "github_pat_test")
+        self.assertEqual(env["GIT_COMMITTER_NAME"], wt.AGENT_IDENTITY[0])
 
 
 if __name__ == "__main__":
