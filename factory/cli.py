@@ -10,7 +10,7 @@ import sys
 from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
-from . import gates, worker, worktree as wt
+from . import gates, sync as syncmod, worker, worktree as wt
 
 
 def _open(args):
@@ -60,6 +60,13 @@ def cmd_status(args):
     print(f"today spend: ${dbmod.spend_today(con):.2f} of "
           f"${float(cfg.get('daily_budget_usd', 20)):.2f}")
     print(f"tickets    : {json.dumps(counts) if counts else '(none)'}")
+    # Throughput a human can act on: how much work actually shipped, and how
+    # much of it shipped without anyone approving it.
+    done = con.execute("SELECT COUNT(*) c FROM tickets WHERE status='merged'").fetchone()["c"]
+    unreviewed = con.execute(
+        "SELECT COUNT(*) c FROM tickets WHERE status='merged' "
+        "AND (review_state IS NULL OR review_state <> 'approved')").fetchone()["c"]
+    print(f"shipped    : {done} merged ({unreviewed} without an approving review)")
 
 
 def cmd_pause(args):
@@ -90,6 +97,23 @@ def cmd_watchdog(args):
     print(f"reaped {n} stale run(s)")
 
 
+def cmd_sync(args):
+    cfg, con = _open(args)
+    changes, errors = syncmod.sync(cfg, con, gh_path=args.gh)
+    for tid, old, new, review, by, url in changes:
+        how = ""
+        if new == "merged":
+            # Say it out loud: an unreviewed merge is a different event than
+            # an approved one, and the queue must not render them the same.
+            how = (f" by {by}" if by else "") + f" [{review}]"
+        print(f"ticket {tid}: {old} -> {new}{how}  {url}")
+    for tid, msg in errors:
+        print(f"ticket {tid}: NOT updated - {msg}")
+    if not changes and not errors:
+        print("nothing to update")
+    sys.exit(1 if errors and not changes else 0)
+
+
 def cmd_gate(args):
     cfg, _ = _open(args)
     root = args.path or cfg["repo"]
@@ -115,7 +139,14 @@ def cmd_blast(args):
     sys.exit(0 if level != "high" else 2)
 
 
-def main(argv=None):
+def build_parser():
+    """Construct the whole CLI, subcommands included.
+
+    Separate from main() so a test can build it. Building is not free: argparse
+    %-formats every help string, so a literal `%` (a Windows env var, a
+    percentage) raises at construction and takes the entire CLI down - every
+    command, including the ones whose help text was fine.
+    """
     p = argparse.ArgumentParser(prog="factory", description="Agentic software factory")
     p.add_argument("-c", "--config", default=os.environ.get("FACTORY_CONFIG", "factory.json"))
     a = p.add_subparsers(dest="cmd", required=True)
@@ -144,10 +175,18 @@ def main(argv=None):
     s = a.add_parser("watchdog"); s.add_argument("--older-than", type=int, default=3600)
     s.add_argument("--kill", action="store_true"); s.set_defaults(fn=cmd_watchdog)
 
+    s = a.add_parser("sync")
+    s.add_argument("--gh", help="path to the gh CLI; default is config gh_path, "
+                                "then PATH, then the per-user install")
+    s.set_defaults(fn=cmd_sync)
+
     s = a.add_parser("gate"); s.add_argument("--path"); s.set_defaults(fn=cmd_gate)
     s = a.add_parser("blast"); s.add_argument("--path"); s.set_defaults(fn=cmd_blast)
+    return p
 
-    args = p.parse_args(argv)
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     args.fn(args)
 
 

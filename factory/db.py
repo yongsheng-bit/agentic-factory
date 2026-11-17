@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS tickets (
     blast_reason TEXT,
     branch       TEXT,
     pr_url       TEXT,
+    review_state TEXT,   -- approved | admin-bypass | unreviewed (set by sync)
+    merged_by    TEXT,
+    merged_at    REAL,
     created_at   REAL    NOT NULL,
     updated_at   REAL    NOT NULL
 );
@@ -71,9 +74,15 @@ def init(con: sqlite3.Connection) -> None:
     # added after first release have to be migrated or every older factory.db
     # fails on the first write that names them.
     have = {r["name"] for r in con.execute("PRAGMA table_info(tickets)")}
-    for col in ("pr_url",):
+    for col, coltype in (("pr_url", "TEXT"),
+                         # How a ticket left the queue matters as much as it
+                         # leaving: `merged` alone cannot tell a reviewed
+                         # change from one merged by admin bypass.
+                         ("review_state", "TEXT"),
+                         ("merged_by", "TEXT"),
+                         ("merged_at", "REAL")):
         if col not in have:
-            con.execute(f"ALTER TABLE tickets ADD COLUMN {col} TEXT")
+            con.execute(f"ALTER TABLE tickets ADD COLUMN {col} {coltype}")
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
 
