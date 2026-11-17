@@ -1,0 +1,104 @@
+name: quality
+
+# The Build & Quality Pipeline from the diagram. Everything here is
+# off-the-shelf: the factory's job is to make these checks non-negotiable,
+# not to reinvent them. Steps self-skip when the repo has no matching manifest.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # --- supply-chain gate (the diagram had none) --------------------------
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: osv-scanner (CVEs in lockfiles)
+        if: hashFiles('**/package-lock.json') || hashFiles('**/requirements*.txt') || hashFiles('**/go.sum') || hashFiles('**/Cargo.lock')
+        run: |
+          curl -sL https://github.com/google/osv-scanner/releases/latest/download/osv-scanner_linux_amd64 -o /usr/local/bin/osv-scanner
+          chmod +x /usr/local/bin/osv-scanner
+          osv-scanner scan . || true
+      - name: npm audit
+        if: hashFiles('package-lock.json')
+        run: npm ci --silent && npm audit --audit-level=high
+      - name: pip-audit
+        if: hashFiles('requirements.txt')
+        run: |
+          pip install --quiet pip-audit
+          pip-audit -r requirements.txt
+
+  # --- code quality ------------------------------------------------------
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: blast radius (deterministic, from the diff)
+        run: |
+          BASE="${{ github.base_ref }}"
+          [ -z "$BASE" ] && BASE="HEAD~1"
+          git fetch --no-tags --depth=200 origin "$BASE" 2>/dev/null || true
+          FILES=$(git diff --name-only "origin/$BASE"...HEAD 2>/dev/null || git diff --name-only HEAD~1)
+          git diff --numstat "origin/$BASE"...HEAD 2>/dev/null > numstat.txt || git diff --numstat HEAD~1 > numstat.txt
+          FILES="$FILES" python tools/blast_check.py
+
+      - name: complexity
+        if: hashFiles('**/*.py')
+        run: |
+          pip install --quiet lizard
+          lizard --CCN 15 --length 200 -w . | tee lizard.txt
+          grep -q "!!" lizard.txt && echo "::warning::complexity warnings" || true
+
+      - name: TypeScript typecheck
+        if: hashFiles('tsconfig.json')
+        run: |
+          npm ci --silent
+          npx tsc --noEmit
+
+      - name: ESLint
+        if: hashFiles('.eslintrc*', 'eslint.config.*')
+        run: npx eslint . --max-warnings=0
+
+      - name: duplication
+        run: npx --yes jscpd --min-lines 10 --min-tokens 80 --reporters console . || true
+
+  # --- tests -------------------------------------------------------------
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        if: hashFiles('package.json')
+        with:
+          node-version: "20"
+      - name: e2e + visual diff
+        if: hashFiles('playwright.config.*')
+        run: |
+          npm ci --silent
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - name: python tests
+        if: hashFiles('pyproject.toml') || hashFiles('pytest.ini') || hashFiles('tests')
+        run: |
+          pip install --quiet pytest
+          python -m pytest -q

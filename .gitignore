@@ -1,0 +1,12 @@
+factory.db
+factory.db-*
+cli-test.db
+cli-test.db-*
+cli-test.json
+factory.json
+__pycache__/
+*.pyc
+.factory-worktrees/
+changed.txt
+numstat.txt
+lizard.txt

@@ -1,0 +1,30 @@
+{
+  "repo": "C:/Users/David/path/to/your-project",
+  "db": "C:/Users/David/agentic-factory/factory.db",
+  "base_branch": "main",
+  "pr_base": "main",
+  "remote": "origin",
+  "push": true,
+  "keep_worktrees": false,
+  "daily_budget_usd": 20.0,
+
+  "agent": {
+    "strong": {
+      "command": ["claude", "-p", "--dangerously-skip-permissions", "--output-format", "json", "{prompt_file}"],
+      "timeout_s": 1800
+    },
+    "cheap": {
+      "command": ["factory-ollama", "{prompt_file}"],
+      "timeout_s": 900,
+      "price_per_mtok_in": 0.0,
+      "price_per_mtok_out": 0.0
+    }
+  },
+
+  "blast": {
+    "high_files": 25,
+    "high_loc": 800,
+    "medium_files": 8,
+    "medium_loc": 250
+  }
+}
