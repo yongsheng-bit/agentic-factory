@@ -128,7 +128,7 @@ def _extract_cost(stdout_text, spec):
             return float(v), 0, 0
 
     usage = blob.get("usage") or blob.get("token_usage") or {}
-    # Some agents (and our own local_llm.py) emit flat token counts.
+
     tin = int(usage.get("input_tokens") or usage.get("prompt_tokens")
               or blob.get("input_tokens") or blob.get("prompt_tokens") or 0)
     tout = int(usage.get("output_tokens") or usage.get("completion_tokens")

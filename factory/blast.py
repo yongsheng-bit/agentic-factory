@@ -13,8 +13,6 @@ from __future__ import annotations
 import fnmatch
 import re
 
-# Touching any of these is high blast radius, always. Migrations are included:
-# a bad schema change is the single most expensive class of "small" diff.
 HIGH_GLOBS = [
     "migrations/*", "*/migrations/*", "**/migrations/*", "alembic/*", "db/migrate/*",
     "*.sql", "**/schema.graphql", "schema.*",
@@ -30,7 +28,6 @@ MEDIUM_GLOBS = [
     "**/api/*", "**/routes/*", "**/models/*",
 ]
 
-# Patterns that mean "this diff is trying to do something we should look at".
 SUSPICIOUS = [
     (re.compile(r"(?i)\b(grant|revoke|bypass|disable)\b.*\b(auth|tls|verify|ssl|rbac|mfa)\b"),
      "auth/TLS relaxation"),

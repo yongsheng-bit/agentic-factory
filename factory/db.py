@@ -70,14 +70,10 @@ def connect(path: str) -> sqlite3.Connection:
 
 def init(con: sqlite3.Connection) -> None:
     con.executescript(SCHEMA)
-    # CREATE TABLE IF NOT EXISTS never touches an existing table, so columns
-    # added after first release have to be migrated or every older factory.db
-    # fails on the first write that names them.
+
     have = {r["name"] for r in con.execute("PRAGMA table_info(tickets)")}
     for col, coltype in (("pr_url", "TEXT"),
-                         # How a ticket left the queue matters as much as it
-                         # leaving: `merged` alone cannot tell a reviewed
-                         # change from one merged by admin bypass.
+
                          ("review_state", "TEXT"),
                          ("merged_by", "TEXT"),
                          ("merged_at", "REAL")):
@@ -86,7 +82,6 @@ def init(con: sqlite3.Connection) -> None:
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
 
-# ---------------------------------------------------------------- tickets
 
 def add_ticket(con, title, body="", source="manual", ref=None,
                budget_usd=2.00, max_retries=3):
@@ -168,7 +163,6 @@ def bump_attempt(con, ticket_id):
     return attempt_of(con, ticket_id)
 
 
-# ---------------------------------------------------------------- runs/spend
 
 def start_run(con, ticket_id, attempt, pid=None):
     cur = con.execute(
@@ -208,7 +202,6 @@ def spend_today(con):
     return float(r["s"])
 
 
-# ---------------------------------------------------------------- kill switch
 
 def set_paused(con, flag: bool):
     con.execute("UPDATE control SET paused=? WHERE id=1", (1 if flag else 0,))

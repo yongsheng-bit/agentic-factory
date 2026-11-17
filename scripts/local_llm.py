@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Cheap-tier agent: a tool-coding loop against a local OpenAI-compatible server.
 
 Why native tool calling instead of the earlier fenced-```sh protocol: this
@@ -50,7 +49,6 @@ MAX_FILES_LISTED = 200
 SKIP_DIRS = {".git", ".factory-tmp", "node_modules", ".venv", "venv", "__pycache__", ".factory-worktrees",
              "dist", "build", ".next", ".pytest_cache", ".mypy_cache", "vendor", ".idea"}
 
-# The orchestrator commits and pushes. The agent must not.
 DENY = [
     (r"^\s*git\s+(commit|push|pull|fetch|checkout|switch|reset|clean|merge|rebase|apply|rm)\b",
      "git history is owned by the orchestrator"),
@@ -138,10 +136,7 @@ class Ctx:
         self.touched = set()
 
     def resolve(self, path):
-        # lstrip("/\\") used to turn the POSIX absolute path "/etc/passwd" into
-        # the worktree-relative "etc/passwd": the model asked for one file and
-        # silently got another, with no refusal anywhere. Linux CI caught it.
-        # Absolute paths are now allowed only when they land inside the worktree.
+
         raw = str(path)
         cand = raw if os.path.isabs(raw) else os.path.join(self.root, raw)
         p = os.path.realpath(cand)
@@ -178,7 +173,6 @@ def _glob_match(rel, pat):
     return any(fnmatch.fnmatch(rel, c) for c in cands)
 
 
-# ------------------------------------------------------------------ tools
 
 def t_read(a):
     r, err = _resolve(a.get("path", ""))
@@ -286,17 +280,13 @@ def _run_env():
         if extra.strip():
             keep.add(extra.strip())
     env = {k: v for k, v in os.environ.items() if k.upper() in keep and v is not None}
-    # Keep scratch files inside the worktree: a test run that writes its cache
-    # to %TEMP% outside the tree is invisible to the commit, and one that writes
-    # inside is at least caught by worktree.commit_all's artifact filter.
+
     scratch = os.path.join(CTX.root, ".factory-tmp")
     os.makedirs(scratch, exist_ok=True)
     env["TEMP"] = env["TMP"] = env["TMPDIR"] = scratch
     return env
 
 
-# Shell metacharacters: with shell=False these are literal arguments, so a
-# model reaching for a pipe needs telling, not a mysterious exit code.
 SHELL_OPS = re.compile(r"[<>|;&`]|\$\(")
 
 
@@ -326,7 +316,7 @@ def _arg_escapes(arg):
     This is a heuristic, not a wall: `pytest ../shared` is stopped, a program
     that resolves a path itself is not. Real isolation means a container.
     """
-    if arg.startswith("-"):                      # flags: -o, --cov=src, ...
+    if arg.startswith("-"):
         arg = arg.split("=", 1)[-1].lstrip("=")
         if not arg:
             return None
@@ -364,9 +354,7 @@ def t_run(a):
         if why:
             return f"error: argument '{arg[:80]}' {why}; work inside the repository"
     env = _run_env()
-    # npm/npx/yarn and pip-installed consoles are .cmd/.bat shims on Windows, and
-    # CreateProcess will not run those without cmd.exe. Metacharacters are already
-    # rejected above, so cmd here sees a fixed argv, not a command line.
+
     resolved = shutil.which(args[0], path=env.get("PATH")) or args[0]
     if resolved.lower().endswith((".cmd", ".bat")):
         args = ["cmd", "/c", resolved] + args[1:]
@@ -390,7 +378,6 @@ DISPATCH = {"read_file": t_read, "write_file": t_write, "edit_file": t_edit,
             "list_files": t_list, "search": t_search, "run_command": t_run}
 
 
-# ------------------------------------------------------------------ loop
 
 def chat(messages, attempts=3):
     body = json.dumps({"model": MODEL, "messages": messages, "tools": TOOLS,
@@ -403,7 +390,7 @@ def chat(messages, attempts=3):
                                          headers={"Content-Type": "application/json"})
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 return json.loads(r.read())
-        except Exception as exc:                 # transient reset / server busy
+        except Exception as exc:
             last = exc
             time.sleep(2 * (i + 1))
     raise RuntimeError(f"LLM request failed after {attempts} tries: {last}")
@@ -444,7 +431,7 @@ def main():
         calls = msg.get("tool_calls") or []
 
         if not calls:
-            # No tool call: nudge once, then accept prose as the final answer.
+
             if steps >= MAX_STEPS - 1:
                 summary = (msg.get("content") or "").strip()
                 break

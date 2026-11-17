@@ -1,8 +1,12 @@
-#!/usr/bin/env python3
 """CI-side blast-radius check. Reads changed paths from FILES and numstat.txt.
 
-Exit codes: 0 = low/medium (CI green), 2 = high (surfaced as a failure so a
-high-blast PR cannot be merged without the CODEOWNERS human gate).
+Exit codes: 0 = low/medium, 2 = high. CI runs this in its own non-required job
+and turns a 2 into a warning annotation plus a step summary, rather than
+failing a required check. A deliberately-failing required check makes "a human
+must read this" indistinguishable from "the build is broken", and the only way
+through it is an override - which trains the reviewer to override. Whether a
+human actually has to approve is branch protection and CODEOWNERS' job; this
+job's job is to say how carefully to read.
 """
 
 import os
@@ -10,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from factory.blast import classify  # noqa: E402
+from factory.blast import classify
 
 
 def main():

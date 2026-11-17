@@ -42,10 +42,7 @@ def _git(args, cwd=None, env=None):
             break
         time.sleep(0.5 * (attempt + 1))
     if r.returncode != 0:
-        # rc and stdout belong in the message: a real run died on
-        # "git add -A: " with nothing after the colon, because git sometimes
-        # fails with the explanation on stdout (or nowhere) and an empty
-        # reason is undebuggable after the worktree is already gone.
+
         detail = (r.stderr.strip() or r.stdout.strip() or "(no output)")
         raise WorktreeError(f"git {' '.join(args)}: rc={r.returncode} "
                             f"(0x{r.returncode & 0xFFFFFFFF:08X}) {detail[:400]}"
@@ -87,8 +84,7 @@ def create(root, ticket_id, ref=None, base="HEAD"):
     if os.path.exists(path):
         remove(root, path, branch=branch)
     else:
-        # A crashed worker can leave the branch without a worktree; `finally`
-        # never ran, so clean it here rather than escalating on retry.
+
         try:
             _git(["rev-parse", "--verify", "--quiet", branch], cwd=root)
             _git(["branch", "-D", branch], cwd=root)
@@ -130,10 +126,7 @@ def remove(root, path, branch=None, force=True):
         _git(args, cwd=root)
     except WorktreeError:
         pass
-    # `git worktree remove` unregisters the worktree but refuses to delete a
-    # directory that still holds untracked files - and the agent's own scratch
-    # (.factory-tmp) lives inside it. Left behind, that stub makes the next
-    # `worktree add` die with "already exists", so the retry escalates too.
+
     if not _rmtree(path):
         try:
             _git(["worktree", "prune"], cwd=root)
@@ -203,11 +196,6 @@ def diff_stat(path, base="HEAD"):
     return len(files), added, deleted
 
 
-# Build artifacts an agent's own test run leaves behind. The factory must not
-# depend on the target repo's .gitignore: with a bare `git add -A`, a committed
-# .pyc turns "agent produced no changes" into "PR containing only .pyc files",
-# which the blast-radius gate reads as a real change. Caught by
-# tests/live_adversarial.py.
 ARTIFACT_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
                  ".factory-tmp", "node_modules", "dist", "build"}
 ARTIFACT_SUFFIXES = (".pyc", ".pyo", ".pyd")
@@ -264,7 +252,7 @@ def commit_all(path, message):
         _git(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"] + junk, cwd=path)
     try:
         _git(["diff", "--cached", "--quiet"], cwd=path)
-        return False  # nothing staged
+        return False
     except WorktreeError:
         pass
     name, email = AGENT_IDENTITY

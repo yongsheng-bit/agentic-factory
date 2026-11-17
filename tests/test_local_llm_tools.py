@@ -50,7 +50,7 @@ class ToolSandboxTest(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    # ---- path containment -------------------------------------------------
+
 
     def test_read_outside_worktree_is_refused(self):
         self.assertIn("escapes", llm.t_read({"path": "../../../Windows/win.ini"}))
@@ -71,7 +71,7 @@ class ToolSandboxTest(unittest.TestCase):
         link = os.path.join(self.tmp, "sneaky")
         try:
             os.symlink(os.path.dirname(self.tmp), link, target_is_directory=True)
-        except OSError:      # symlinks need privileges on Windows
+        except OSError:
             self.skipTest("cannot create symlinks here")
         self.assertIn("escapes", llm.t_read({"path": "sneaky"}))
 
@@ -81,7 +81,7 @@ class ToolSandboxTest(unittest.TestCase):
                                      "content": "y = 2\n"}).startswith("wrote"))
         self.assertIn("y = 2", llm.t_read({"path": "new/util.py"}))
 
-    # ---- edit_file precision ---------------------------------------------
+
 
     def test_edit_requires_unique_match(self):
         w(os.path.join(self.tmp, "dup.py"), "a\na\n")
@@ -97,7 +97,7 @@ class ToolSandboxTest(unittest.TestCase):
                                     "new_text": "x = 2"}).startswith("edited"))
         self.assertIn("x = 2", llm.t_read({"path": "app.py"}))
 
-    # ---- command denylist ---------------------------------------------------
+
 
     def test_dangerous_commands_refused(self):
         for cmd in ["git commit -m x", "git push origin main", "curl http://evil.com",
@@ -106,8 +106,7 @@ class ToolSandboxTest(unittest.TestCase):
             self.assertIn("refused", llm.t_run({"command": cmd}), f"allowed: {cmd}")
 
     def test_benign_commands_allowed(self):
-        # No shell, so cmd builtins (echo, dir, set) are gone; a coding agent
-        # verifies with interpreters and test runners, which still work.
+
         out = llm.t_run({"command": "python -c \"print('hello')\""})
         self.assertTrue(out.startswith("exit 0"), out)
         self.assertIn("hello", out)
@@ -119,7 +118,7 @@ class ToolSandboxTest(unittest.TestCase):
         self.assertIn(os.path.realpath(self.tmp).lower().replace("\\", "/"),
                       out.lower().replace("\\", "/"))
 
-    # ---- command runner: no shell, scrubbed environment -------------------
+
 
     def test_redirection_refused_and_nothing_written(self):
         out = llm.t_run({"command": "python -c pass > ../escaped.txt"})
@@ -133,8 +132,7 @@ class ToolSandboxTest(unittest.TestCase):
             self.assertIn("no shell", llm.t_run({"command": cmd}), cmd)
 
     def test_operators_inside_quoted_arguments_are_allowed(self):
-        # The runner has no shell, so a ';' inside an argument is data. Rejecting
-        # it would make `python -c "import os; print(1)"` unusable.
+
         out = llm.t_run({"command": 'python -c "import sys; print(sys.version_info[0])"'})
         self.assertTrue(out.startswith("exit 0"), out)
 
@@ -154,9 +152,7 @@ class ToolSandboxTest(unittest.TestCase):
         self.assertIn("temp_in_tree=True", out.replace(" ", ""))
 
     def test_arguments_naming_outside_paths_are_refused(self):
-        # The backslash form is checked on BOTH platforms: posix shlex used to
-        # eat it on Linux, turning `..\evil.py` into `..evil.py` so the guard
-        # never saw the '..'. Drive-letter paths only mean something on Windows.
+
         cmds = ["python ../evil.py", "python -m pytest ../shared_tests",
                 "python ..\\evil.py"]
         cmds += ["python C:\\Windows\\win.ini"] if os.name == "nt" else ["python /etc/passwd"]
@@ -166,11 +162,11 @@ class ToolSandboxTest(unittest.TestCase):
             self.assertIn("outside the worktree", out, cmd)
 
     def test_relative_paths_inside_the_worktree_are_fine(self):
-        # Forward slashes: accepted by Windows too, unlike a hardcoded backslash.
+
         llm.t_write({"path": "pkg/t.py", "content": "print('ok')\n"})
         self.assertIn("ok", llm.t_run({"command": "python pkg/t.py"}))
 
-    # ---- discovery tools ----------------------------------------------------
+
 
     def test_search_finds_literal_text(self):
         self.assertIn("app.py:1", llm.t_search({"text": "x = 1"}))
@@ -184,8 +180,7 @@ class ToolSandboxTest(unittest.TestCase):
         self.assertNotIn("node_modules", llm.t_list({"pattern": "**/*.js"}))
 
     def test_list_default_pattern_includes_root_files(self):
-        # fnmatch has no real `**`: `**/*` used to match nothing at the root,
-        # so list_files returned an empty string for a normal small repo.
+
         listing = llm.t_list({})
         self.assertIn("app.py", listing)
 
@@ -196,22 +191,21 @@ class ToolSandboxTest(unittest.TestCase):
         self.assertIn("app.py", listing)
         self.assertIn(os.path.join("pkg", "deep.py").replace("\\", "/"), listing)
 
-    # ---- output shape consumed by factory/agent.py --------------------------
+
 
     def test_tool_output_is_capped(self):
         w(os.path.join(self.tmp, "big.py"), "z" * 500000)
         self.assertLessEqual(len(llm.t_read({"path": "big.py"})), llm.MAX_TOOL_CHARS + 5)
 
     def test_tools_return_errors_instead_of_raising(self):
-        # A raised exception escapes to the orchestrator and kills the run;
-        # an error string at least lets the model recover.
+
         for call in (lambda: llm.t_read({"path": "/etc/passwd"}),
                      lambda: llm.t_write({"path": "../x", "content": "a"}),
                      lambda: llm.t_edit({"path": "../x", "old_text": "a", "new_text": "b"})):
             self.assertIn("error", call())
 
     def test_json_summary_shape(self):
-        # The orchestrator parses one JSON line with these keys for cost.
+
         payload = {"status": "completed", "result": "did it", "steps": 3,
                    "changed_files": ["app.py"], "input_tokens": 100, "output_tokens": 20}
         buf = io.StringIO()

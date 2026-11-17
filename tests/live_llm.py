@@ -27,8 +27,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from factory import db as dbmod          # noqa: E402
-from factory import worker               # noqa: E402
+from factory import db as dbmod
+from factory import worker
 
 BASE = os.environ.get("LLM_BASE", "http://192.168.68.73:8080/v1")
 PY = sys.executable
@@ -177,15 +177,14 @@ def main():
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "init")
 
-    # The bug must actually be failing before the agent touches it, otherwise
-    # a green result proves nothing.
+
     pre = subprocess.run([PY, "-m", "unittest", "-q"], cwd=repo, capture_output=True, text=True)
     assert pre.returncode != 0, "test repo is not actually broken - the test is worthless"
 
     wins = 0
     for i in range(1, rounds + 1):
         print(f"[ticket {i}]")
-        if i > 1:   # reset to the buggy baseline so every round faces the same bug
+        if i > 1:
             git(repo, "checkout", "-q", "main")
             git(repo, "reset", "--hard", "-q", "main")
         ok, _why = one_run(root, repo, i)

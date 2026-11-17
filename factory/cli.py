@@ -60,8 +60,7 @@ def cmd_status(args):
     print(f"today spend: ${dbmod.spend_today(con):.2f} of "
           f"${float(cfg.get('daily_budget_usd', 20)):.2f}")
     print(f"tickets    : {json.dumps(counts) if counts else '(none)'}")
-    # Throughput a human can act on: how much work actually shipped, and how
-    # much of it shipped without anyone approving it.
+
     done = con.execute("SELECT COUNT(*) c FROM tickets WHERE status='merged'").fetchone()["c"]
     unreviewed = con.execute(
         "SELECT COUNT(*) c FROM tickets WHERE status='merged' "
@@ -103,8 +102,7 @@ def cmd_sync(args):
     for tid, old, new, review, by, url in changes:
         how = ""
         if new == "merged":
-            # Say it out loud: an unreviewed merge is a different event than
-            # an approved one, and the queue must not render them the same.
+
             how = (f" by {by}" if by else "") + f" [{review}]"
         print(f"ticket {tid}: {old} -> {new}{how}  {url}")
     for tid, msg in errors:
@@ -126,7 +124,7 @@ def cmd_blast(args):
     cfg, _ = _open(args)
     target = args.path or cfg["repo"]
     try:
-        wt.repo_root(target)          # fail loudly: "low" from a non-repo is a lie
+        wt.repo_root(target)
     except Exception as exc:
         print(f"not a git repo ({target}): {exc}")
         sys.exit(3)

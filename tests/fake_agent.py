@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Stand-in agent for smoke-testing the pipeline without spending tokens.
 
 Reads the prompt file (so we prove the placeholder wiring works), writes a
@@ -31,9 +30,7 @@ elif mode == "migration":
     pathlib.Path("migrations/0001_add_col.py").write_text("# schema change\n", encoding="utf-8")
 else:
     pathlib.Path("fix.py").write_text("def fix():\n    return 42\n", encoding="utf-8")
-    # An agent that runs the tests leaves build artifacts behind. They must not
-    # ride into the PR just because the target repo happens to lack a
-    # .gitignore entry for them.
+
     pathlib.Path("__pycache__").mkdir(exist_ok=True)
     pathlib.Path("__pycache__/fix.cpython-314.pyc").write_bytes(b"\x00\x0b\x0d\x0a")
     pathlib.Path(".pytest_cache").mkdir(exist_ok=True)
