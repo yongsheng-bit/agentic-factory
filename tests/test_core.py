@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import tempfile
@@ -651,6 +652,103 @@ class TestShowCommand(unittest.TestCase):
         self.assertIn("pr         : -", out)
         self.assertIn("last error : -", out)
         self.assertIn("blast      : - (-)", out)
+
+
+class TestRunsCommand(unittest.TestCase):
+    """`factory runs` is how a routing decision gets audited after the fact.
+
+    Every run already stores the tier it used and why; without a reader for
+    those columns the only way to ask "why did this ticket get the strong
+    model" is raw SQL against the queue file.
+    """
+
+    def _env(self):
+        """A real config file pointing at a real queue, so the CLI is
+        exercised end to end instead of through a mocked _open()."""
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db}, fh)
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        def run(*argv):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, *argv])
+            return buf.getvalue()
+
+        return con, cfg, run
+
+    def _seed(self, con):
+        cheap = dbmod.add_ticket(con, "typo in README")
+        strong = dbmod.add_ticket(con, "rotate auth tokens")
+        one = dbmod.start_run(con, cheap, 1, tier="cheap", tier_reason="blast low")
+        dbmod.end_run(con, one, "ok", 0.04, "shipped")
+        two = dbmod.start_run(con, strong, 1, tier="strong",
+                              tier_reason="blast high: touches auth")
+        dbmod.end_run(con, two, "fail", 0.31, "boom")
+        return cheap, strong
+
+    def test_seeded_runs_are_listed_newest_first(self):
+        con, _, run = self._env()
+        self._seed(con)
+        out = run("runs")
+        self.assertIn("tier_reason", out)
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 3)
+        self.assertTrue(re.match(r"^\s*\d+\s+\d+\s+1\s+fail\s+strong\s+blast high: "
+                                 r"touches auth\s+\$0\.31\s+\d{4}-\d\d-\d\d "
+                                 r"\d\d:\d\d:\d\d$", lines[1]), lines[1])
+        self.assertTrue(re.match(r"^\s*\d+\s+\d+\s+1\s+ok\s+cheap\s+blast low\s+"
+                                 r"\$0\.04\s+\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$",
+                                 lines[2]), lines[2])
+        self.assertGreater(int(lines[1].split()[0]), int(lines[2].split()[0]))
+
+    def test_ticket_filter(self):
+        con, _, run = self._env()
+        cheap, strong = self._seed(con)
+        out = run("runs", "--ticket", str(strong))
+        self.assertIn("blast high: touches auth", out)
+        self.assertNotIn("blast low", out)
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1].split()[1], str(strong))
+        other = run("runs", "--ticket", str(cheap))
+        self.assertIn("blast low", other)
+        self.assertNotIn("touches auth", other)
+        self.assertEqual([ln.split()[1] for ln in other.splitlines()
+                          if ln.strip()][1], str(cheap))
+
+    def test_limit_caps_the_output(self):
+        con, _, run = self._env()
+        self._seed(con)
+        out = run("runs", "--limit", "1")
+        self.assertEqual(len([ln for ln in out.splitlines() if ln.strip()]), 2)
+        self.assertIn("blast high: touches auth", out)
+
+    def test_empty_queue_says_no_runs(self):
+        _, _, run = self._env()
+        self.assertEqual(run("runs").strip(), "(no runs)")
+        self.assertEqual(run("runs", "--ticket", "99").strip(), "(no runs)")
+
+    def test_run_without_a_tier_shows_placeholders(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "unrouted")
+        run_id = dbmod.start_run(con, tid, 1)
+        dbmod.end_run(con, run_id, "ok", 0.0, "fine")
+        out = run("runs")
+        row = [ln for ln in out.splitlines() if ln.strip()][-1]
+        self.assertTrue(re.match(r"^\s*\d+\s+\d+\s+1\s+ok\s+-\s+-\s+\$0\.00\s+"
+                                 r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$", row), row)
 
 
 class TestNoComments(unittest.TestCase):

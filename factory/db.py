@@ -118,6 +118,16 @@ def list_tickets(con, status=None, limit=50):
     return rows
 
 
+def list_runs(con, ticket_id=None, limit=20):
+    """Recent run history, newest first. `ticket_id` narrows it to one ticket."""
+    if ticket_id is not None:
+        return con.execute(
+            "SELECT * FROM runs WHERE ticket_id=? ORDER BY id DESC LIMIT ?",
+            (ticket_id, limit)).fetchall()
+    return con.execute(
+        "SELECT * FROM runs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+
+
 def claim_next(con, worker_id="w0"):
     """Atomically move the oldest queued ticket to running. Returns row or None."""
     con.execute("BEGIN IMMEDIATE")
