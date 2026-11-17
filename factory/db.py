@@ -158,6 +158,12 @@ def set_blast(con, ticket_id, level, reason, branch=None):
         (level, reason, branch, time.time(), ticket_id))
 
 
+def set_tier(con, ticket_id, tier):
+    """Pin the model tier, or pass None to hand the decision back to the router."""
+    con.execute("UPDATE tickets SET tier=?, updated_at=? WHERE id=?",
+                (tier, time.time(), ticket_id))
+
+
 def set_pr(con, ticket_id, url):
     """Record the PR link. The dashboard's `pr_open` status is worthless
     without something a human can click."""

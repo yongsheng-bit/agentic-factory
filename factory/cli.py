@@ -188,6 +188,22 @@ def cmd_blast(args):
     sys.exit(0 if level != "high" else 2)
 
 
+def cmd_tier(args):
+    """Pin a ticket's tier, or clear the pin with `auto`."""
+    cfg, con = _open(args)
+    t = dbmod.get_ticket(con, args.id)
+    if t is None:
+        print(f"no such ticket {args.id}")
+        sys.exit(1)
+    tier = None if args.tier == "auto" else args.tier
+    dbmod.set_tier(con, t["id"], tier)
+    t = dbmod.get_ticket(con, t["id"])
+    decided, why = agentmod.tier_decision(cfg, t)
+    now = f"pinned to {tier}" if tier else "router decides"
+    print(f"ticket {t['id']}: {now}")
+    print(f"would route: {decided} ({why})")
+
+
 def build_parser():
     """Construct the whole CLI, subcommands included.
 
@@ -222,6 +238,11 @@ def build_parser():
 
     s = a.add_parser("retry"); s.add_argument("id", type=int)
     s.set_defaults(fn=cmd_retry)
+
+    s = a.add_parser("tier"); s.add_argument("id", type=int)
+    s.add_argument("tier", choices=["cheap", "strong", "auto"],
+                   help="pin the model tier, or auto to let the router decide")
+    s.set_defaults(fn=cmd_tier)
     a.add_parser("status").set_defaults(fn=cmd_status)
     a.add_parser("pause").set_defaults(fn=cmd_pause)
     a.add_parser("resume").set_defaults(fn=cmd_resume)

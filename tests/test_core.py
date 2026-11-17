@@ -855,6 +855,86 @@ class TestRetryCommand(unittest.TestCase):
         self.assertIsNone(dbmod.claim_next(con))
 
 
+class TestTierCommand(unittest.TestCase):
+    """`factory tier <id> <cheap|strong|auto>` edits the routing pin later.
+
+    `factory add --tier` is the only other way to set tickets.tier, so without
+    this command a wrong pin at creation time is permanent without SQL. The
+    command echoes the decision the router would now make, because the pin is
+    worth nothing if the operator cannot see what it changed.
+    """
+
+    def _env(self):
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db,
+                       "agent": {"cheap": {}, "strong": {}}}, fh)
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        def run(*argv):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, *argv])
+            return buf.getvalue()
+
+        return con, cfg, run
+
+    def test_pin_overrides_the_router(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "dangerous")
+        out = run("tier", str(tid), "strong")
+        self.assertIn("pinned to strong", out)
+        self.assertIn("would route: strong (explicit override)", out)
+        self.assertEqual(dbmod.get_ticket(con, tid)["tier"], "strong")
+
+    def test_auto_clears_the_pin_back_to_null(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "mis-pinned", tier="cheap")
+        run("tier", str(tid), "auto")
+        self.assertIsNone(dbmod.get_ticket(con, tid)["tier"])
+        out = run("tier", str(tid), "auto")
+        self.assertIn("router decides", out)
+        self.assertIn("would route: cheap (default)", out)
+
+    def test_cleared_pin_shows_the_escalation_the_router_now_makes(self):
+        con, _, run = self._env()
+        tid = dbmod.add_ticket(con, "flaky", tier="cheap")
+        dbmod.bump_attempt(con, tid)
+        out = run("tier", str(tid), "auto")
+        self.assertIn("would route: strong (escalated after 1 failed attempt(s))", out)
+
+    def test_unknown_id_says_so_and_exits_one(self):
+        import contextlib
+        import io
+
+        from factory import cli
+        _, cfg, _ = self._env()
+        buf = io.StringIO()
+        with self.assertRaises(SystemExit) as cm:
+            with contextlib.redirect_stdout(buf):
+                cli.main(["-c", cfg, "tier", "4242", "strong"])
+        self.assertEqual(cm.exception.code, 1)
+        self.assertEqual(buf.getvalue().strip(), "no such ticket 4242")
+
+    def test_set_tier_round_trips_through_the_database(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "edited")
+        dbmod.set_tier(con, tid, "strong")
+        self.assertEqual(dbmod.get_ticket(con, tid)["tier"], "strong")
+        dbmod.set_tier(con, tid, None)
+        self.assertIsNone(dbmod.get_ticket(con, tid)["tier"])
+
+
 class TestNoComments(unittest.TestCase):
     """The no-comments rule must hold for the whole repo, not by memory."""
 
