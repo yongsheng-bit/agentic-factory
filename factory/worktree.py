@@ -174,7 +174,12 @@ def push_branch(path, branch, remote="origin"):
 
 
 def open_pr(path, branch, title, body, base="main"):
-    """Open a PR with gh. Returns PR url or None if gh is unavailable."""
+    """Open a PR with gh. Returns the PR url, or None if gh is not installed.
+
+    Raises when gh IS installed but the call failed. Returning None there was a
+    lie one level up: the worker marked the ticket pr_open and printed the
+    branch name, so a failed PR looked exactly like a successful one.
+    """
     import shutil as _sh
     if not _sh.which("gh"):
         return None
@@ -182,5 +187,6 @@ def open_pr(path, branch, title, body, base="main"):
                         "--title", title, "--body", body],
                        cwd=path, capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
-        return None
+        detail = (r.stderr or r.stdout or "").strip()
+        raise RuntimeError(f"gh pr create failed ({r.returncode}): {detail[:400]}")
     return r.stdout.strip()

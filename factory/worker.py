@@ -136,7 +136,10 @@ def process_once(cfg, con, dry=False):
                 pr_url = wt.open_pr(path, branch, f"{ticket['ref'] or ''} {ticket['title']}".strip(),
                                     body, base=cfg.get("pr_base", "main"))
             except Exception as exc:
-                notify.notify(f"PUSH FAILED: {ticket['ref'] or ticket['id']}", str(exc))
+                # A commit that never reached a remote is invisible: nobody
+                # reviews it, no CI runs, and the ticket would sit in the
+                # dashboard as pr_open forever. Escalate instead.
+                return _escalate(con, ticket, f"push/PR failed: {exc}")
 
         if level == "high":
             dbmod.finish(con, ticket["id"], "needs_review")
