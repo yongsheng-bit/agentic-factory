@@ -142,8 +142,23 @@ def diff_stat(path, base="HEAD"):
     return len(files), added, deleted
 
 
+# Build artifacts an agent's own test run leaves behind. The factory must not
+# depend on the target repo's .gitignore: with a bare `git add -A`, a committed
+# .pyc turns "agent produced no changes" into "PR containing only .pyc files",
+# which the blast-radius gate reads as a real change. Caught by
+# tests/live_adversarial.py.
+ARTIFACT_EXCLUDES = [
+    ":(exclude,glob)**/__pycache__/", ":(exclude,glob)__pycache__/",
+    ":(exclude,glob)**/*.py[cod]",
+    ":(exclude,glob)**/.pytest_cache/", ":(exclude,glob).pytest_cache/",
+    ":(exclude,glob)**/.mypy_cache/", ":(exclude,glob)**/.ruff_cache/",
+    ":(exclude,glob)**/node_modules/",
+    ":(exclude,glob)**/dist/", ":(exclude,glob)**/build/",
+]
+
+
 def commit_all(path, message):
-    _git(["add", "-A"], cwd=path)
+    _git(["add", "-A", "--", "."] + ARTIFACT_EXCLUDES, cwd=path)
     try:
         _git(["diff", "--cached", "--quiet"], cwd=path)
         return False  # nothing staged

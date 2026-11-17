@@ -128,8 +128,11 @@ def _extract_cost(stdout_text, spec):
             return float(v), 0, 0
 
     usage = blob.get("usage") or blob.get("token_usage") or {}
-    tin = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
-    tout = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    # Some agents (and our own local_llm.py) emit flat token counts.
+    tin = int(usage.get("input_tokens") or usage.get("prompt_tokens")
+              or blob.get("input_tokens") or blob.get("prompt_tokens") or 0)
+    tout = int(usage.get("output_tokens") or usage.get("completion_tokens")
+               or blob.get("output_tokens") or blob.get("completion_tokens") or 0)
     pin = float(spec.get("price_per_mtok_in", 0.0))
     pout = float(spec.get("price_per_mtok_out", 0.0))
     est = (tin * pin + tout * pout) / 1_000_000.0

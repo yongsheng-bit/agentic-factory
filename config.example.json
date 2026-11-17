@@ -14,10 +14,17 @@
       "timeout_s": 1800
     },
     "cheap": {
-      "command": ["factory-ollama", "{prompt_file}"],
+      "command": ["python", "C:/Users/David/agentic-factory/scripts/local_llm.py", "{prompt_file}"],
       "timeout_s": 900,
-      "price_per_mtok_in": 0.0,
-      "price_per_mtok_out": 0.0
+      "env": {
+        "LLM_BASE": "http://192.168.68.73:8080/v1",
+        "LLM_MODEL": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
+        "LLM_MAX_STEPS": "20",
+        "LLM_MAX_TOKENS": "60000"
+      },
+      "_pricing_note": "Local model, so real marginal cost is ~0. These are API-equivalent shadow prices: they keep the per-ticket and daily budget governors meaningful (a $0 price makes both caps inert) and the ledger then reads as money the 3090 saved you.",
+      "price_per_mtok_in": 0.30,
+      "price_per_mtok_out": 1.20
     }
   },
 
