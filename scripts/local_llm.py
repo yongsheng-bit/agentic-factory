@@ -288,7 +288,7 @@ def _run_env():
     env = {k: v for k, v in os.environ.items() if k.upper() in keep and v is not None}
     # Keep scratch files inside the worktree: a test run that writes its cache
     # to %TEMP% outside the tree is invisible to the commit, and one that writes
-    # inside is at least caught by ARTIFACT_EXCLUDES.
+    # inside is at least caught by worktree.commit_all's artifact filter.
     scratch = os.path.join(CTX.root, ".factory-tmp")
     os.makedirs(scratch, exist_ok=True)
     env["TEMP"] = env["TMP"] = env["TMPDIR"] = scratch

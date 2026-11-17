@@ -147,19 +147,39 @@ def diff_stat(path, base="HEAD"):
 # .pyc turns "agent produced no changes" into "PR containing only .pyc files",
 # which the blast-radius gate reads as a real change. Caught by
 # tests/live_adversarial.py.
-ARTIFACT_EXCLUDES = [
-    ":(exclude,glob)**/__pycache__/", ":(exclude,glob)__pycache__/",
-    ":(exclude,glob)**/*.py[cod]",
-    ":(exclude,glob)**/.pytest_cache/", ":(exclude,glob).pytest_cache/",
-    ":(exclude,glob)**/.factory-tmp/", ":(exclude,glob).factory-tmp/",
-    ":(exclude,glob)**/.mypy_cache/", ":(exclude,glob)**/.ruff_cache/",
-    ":(exclude,glob)**/node_modules/",
-    ":(exclude,glob)**/dist/", ":(exclude,glob)**/build/",
-]
+ARTIFACT_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+                 ".factory-tmp", "node_modules", "dist", "build"}
+ARTIFACT_SUFFIXES = (".pyc", ".pyo", ".pyd")
+
+
+def _is_artifact(rel):
+    parts = rel.replace("\\", "/").split("/")
+    if any(p in ARTIFACT_DIRS for p in parts[:-1]):
+        return True
+    return rel.endswith(ARTIFACT_SUFFIXES)
 
 
 def commit_all(path, message):
-    _git(["add", "-A", "--", "."] + ARTIFACT_EXCLUDES, cwd=path)
+    """Stage everything the agent legitimately changed; return False if it changed nothing.
+
+    Exclusion is done by unstaging AFTER `git add -A`, not with :(exclude)
+    pathspecs. Git refuses exclude pathspecs that name a directory the repo's
+    .gitignore already ignores ("The following paths are ignored by one of your
+    .gitignore files: .factory-tmp") and exits 1 - which is what the first real
+    run hit, because the sandbox writes its scratch into .factory-tmp.
+
+    Only files with status A (newly added) are unstaged. A repo that tracks
+    build/out.js on purpose must get its modification committed, not deleted
+    from the index.
+    """
+    _git(["add", "-A"], cwd=path)
+    try:
+        added = _git(["diff", "--cached", "--name-only", "--diff-filter=A"], cwd=path)
+    except WorktreeError:
+        added = ""
+    junk = [f for f in added.splitlines() if f.strip() and _is_artifact(f.strip())]
+    if junk:
+        _git(["rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"] + junk, cwd=path)
     try:
         _git(["diff", "--cached", "--quiet"], cwd=path)
         return False  # nothing staged

@@ -10,6 +10,7 @@ from factory import agent as agentmod
 from factory import blast as blastmod
 from factory import db as dbmod
 from factory import gates
+from factory import worktree
 
 
 def fresh_db(case=None):
@@ -245,6 +246,73 @@ class TestSecretGate(unittest.TestCase):
     def test_skips_vendor_dirs(self):
         self._write("node_modules/pkg/x.js", "var k='AKIAIOSFODNN7EXAMPLE'\n")
         self.assertTrue(gates.check(self.dir)["ok"])
+
+
+class TestCommitAll(unittest.TestCase):
+    """commit_all runs real git, so it is the piece most likely to differ
+    between the dev machine and CI. The first real run on Linux proved that."""
+
+    def setUp(self):
+        import subprocess
+        self.dir = tempfile.mkdtemp()
+        self.git = subprocess.run
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.env = env
+
+        def git(*a):
+            r = subprocess.run(["git", *a], cwd=self.dir, capture_output=True,
+                               text=True, env=env)
+            assert r.returncode == 0, r.stderr
+        self.g = git
+        git("init", "-q", "-b", "main")
+        with open(os.path.join(self.dir, ".gitignore"), "w") as fh:
+            fh.write(".factory-tmp/\n")   # the sandbox scratch dir; see the regression test
+        with open(os.path.join(self.dir, "app.py"), "w") as fh:
+            fh.write("print(1)\n")
+        os.makedirs(os.path.join(self.dir, "build"))
+        with open(os.path.join(self.dir, "build", "out.js"), "w") as fh:
+            fh.write("v1\n")             # a repo that TRACKS build/ on purpose
+        git("add", "-A")
+        git("commit", "-qm", "seed")
+
+    def _touch(self, rel, content="x"):
+        p = os.path.join(self.dir, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True) if os.path.dirname(p) else None
+        with open(p, "w") as fh:
+            fh.write(content)
+
+    def _committed(self):
+        r = self.git(["git", "show", "--name-only", "--format=", "HEAD"],
+                     cwd=self.dir, capture_output=True, text=True, env=self.env)
+        return sorted(r.stdout.split())
+
+    def test_artifacts_from_a_test_run_are_not_committed(self):
+        self._touch("new_test.py", "def test_x():\n    assert True\n")
+        self._touch("__pycache__/new_test.cpython-314.pyc")
+        self._touch(".pytest_cache/v/cache/lastfailed", "{}")
+        self._touch("node_modules/pkg/index.js")
+        self.assertTrue(worktree.commit_all(self.dir, "add test"))
+        self.assertEqual(self._committed(), ["new_test.py"])
+
+    def test_tracked_artifact_modification_is_still_committed(self):
+        # Unstaging artifacts must never stage the DELETION of a file the repo
+        # tracks deliberately - only newly added files are dropped.
+        self._touch("build/out.js", "v2\n")
+        self.assertTrue(worktree.commit_all(self.dir, "rebuild"))
+        self.assertEqual(self._committed(), ["build/out.js"])
+
+    def test_ignored_scratch_dir_does_not_break_the_add(self):
+        # Regression: :(exclude) pathspecs naming a gitignored directory make
+        # `git add` exit 1, which escalated every ticket. The sandbox writes
+        # its scratch into .factory-tmp, so this fires on every real run.
+        self._touch(".factory-tmp/scratch.txt", "junk")
+        self._touch("real.py", "print(2)\n")
+        self.assertTrue(worktree.commit_all(self.dir, "add real"))
+        self.assertEqual(self._committed(), ["real.py"])
+
+    def test_no_changes_returns_false(self):
+        self.assertFalse(worktree.commit_all(self.dir, "nothing"))
 
 
 if __name__ == "__main__":
