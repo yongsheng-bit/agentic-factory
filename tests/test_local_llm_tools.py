@@ -154,13 +154,20 @@ class ToolSandboxTest(unittest.TestCase):
         self.assertIn("temp_in_tree=True", out.replace(" ", ""))
 
     def test_arguments_naming_outside_paths_are_refused(self):
-        for cmd in ["python ..\\evil.py", "python C:\\Windows\\win.ini",
-                    "python /etc/passwd", "python -m pytest ../shared_tests"]:
-            self.assertIn("outside the worktree", llm.t_run({"command": cmd}).replace(
-                "contains '..'", "outside the worktree"), cmd)
+        # The backslash form is checked on BOTH platforms: posix shlex used to
+        # eat it on Linux, turning `..\evil.py` into `..evil.py` so the guard
+        # never saw the '..'. Drive-letter paths only mean something on Windows.
+        cmds = ["python ../evil.py", "python -m pytest ../shared_tests",
+                "python ..\\evil.py"]
+        cmds += ["python C:\\Windows\\win.ini"] if os.name == "nt" else ["python /etc/passwd"]
+        for cmd in cmds:
+            out = llm.t_run({"command": cmd}).replace("contains '..'",
+                                                      "outside the worktree")
+            self.assertIn("outside the worktree", out, cmd)
 
     def test_relative_paths_inside_the_worktree_are_fine(self):
-        llm.t_write({"path": "pkg\\t.py", "content": "print('ok')\n"})
+        # Forward slashes: accepted by Windows too, unlike a hardcoded backslash.
+        llm.t_write({"path": "pkg/t.py", "content": "print('ok')\n"})
         self.assertIn("ok", llm.t_run({"command": "python pkg/t.py"}))
 
     # ---- discovery tools ----------------------------------------------------

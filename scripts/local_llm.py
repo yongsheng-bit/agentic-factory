@@ -138,9 +138,16 @@ class Ctx:
         self.touched = set()
 
     def resolve(self, path):
-        p = os.path.realpath(os.path.join(self.root, str(path).lstrip("/\\")))
+        # lstrip("/\\") used to turn the POSIX absolute path "/etc/passwd" into
+        # the worktree-relative "etc/passwd": the model asked for one file and
+        # silently got another, with no refusal anywhere. Linux CI caught it.
+        # Absolute paths are now allowed only when they land inside the worktree.
+        raw = str(path)
+        cand = raw if os.path.isabs(raw) else os.path.join(self.root, raw)
+        p = os.path.realpath(cand)
         if p != self.root and not p.startswith(self.root + os.sep):
-            raise ValueError(f"path escapes the worktree: {path}")
+            raise ValueError(f"path escapes the worktree: {path} "
+                             f"(use a path relative to the repo root)")
         rel = os.path.relpath(p, self.root).replace("\\", "/")
         if rel.startswith(".git") or rel.startswith(".factory-worktrees"):
             raise ValueError(f"refusing to touch VCS/orchestrator internals: {rel}")
@@ -302,12 +309,14 @@ _ABS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|[\\\\]{2}|/)")
 
 
 def _argv(cmd):
-    """Split a command line without a shell. Windows keeps backslashes and
-    leaves the quotes on the tokens, so strip them."""
-    if os.name == "nt":
-        args = [a.strip('"') for a in shlex.split(cmd, posix=False)]
-    else:
-        args = shlex.split(cmd)
+    """Split a command line without a shell.
+
+    posix=False on every platform. Posix mode EATS backslashes, so on Linux
+    `python ..\\evil.py` arrived as the token `..evil.py` and the escape check
+    never saw the '..'. Keeping the raw characters means the guard inspects what
+    the model actually typed; we strip the surrounding quotes ourselves.
+    """
+    args = [a.strip('"\'') for a in shlex.split(cmd, posix=False)]
     return [a for a in args if a != ""]
 
 
