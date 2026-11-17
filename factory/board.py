@@ -8,6 +8,7 @@ and the next run retries.
 """
 
 import json
+import re
 import subprocess
 import urllib.error
 import urllib.request
@@ -27,6 +28,19 @@ CLOSED_STATUSES = ("merged", "closed")
 
 class BoardError(Exception):
     pass
+
+
+def _repo(cfg):
+    slug = cfg.get("repo_slug") or cfg.get("repo", "")
+    if re.fullmatch(r"[^/\\\s:]+/[^/\\\s:]+", slug.strip()):
+        return slug.strip().strip("/")
+    url = subprocess.run(
+        "git -C \"{}\" remote get-url {}".format(cfg["repo"], cfg.get("remote", "origin")),
+        shell=True, capture_output=True, text=True).stdout.strip()
+    m = re.search(r"[^/]+/[^/]+(?:\.git)?$", url)
+    if not m:
+        raise BoardError(f"cannot derive owner/name from remote url: {url!r}")
+    return m.group(0)[:-4] if url.endswith(".git") else m.group(0)
 
 
 def _token(cfg):
@@ -67,29 +81,37 @@ def gql(cfg, query, variables=None):
 
 
 def ensure_columns(cfg, project_id):
-    """Resolve the Status single-select options, creating any we need."""
+    """Resolve the Status single-select options, creating any we need.
+
+    The API has no "add one option" mutation: updateProjectV2Field replaces
+    the whole option list, so we echo the existing options back (ids intact)
+    and append the missing ones.
+    """
     want = ["Open", "In progress", "Review", "Blocked", "Done"]
+    colors = {"Open": "GRAY", "In progress": "YELLOW", "Review": "PURPLE",
+              "Blocked": "RED", "Done": "GREEN"}
     d = gql(cfg, """query($id: ID!) { node(id: $id) { ... on ProjectV2 {
         fields(first: 30) { nodes {
-          ... on ProjectV2SingleSelectField { id name options { id name } }
+          ... on ProjectV2SingleSelectField { id name options {
+            id name description color } }
         } } } } }""", {"id": project_id})
     field = next((f for f in d["node"]["fields"]["nodes"]
                   if f.get("name") == "Status"), None)
     if field is None:
         raise BoardError("project has no Status field")
     options = {o["name"]: o["id"] for o in field.get("options", [])}
-    colors = {"Open": "GRAY", "In progress": "YELLOW", "Review": "PURPLE",
-              "Blocked": "RED", "Done": "GREEN"}
-    for name in want:
-        if name not in options:
-            gql(cfg, """mutation($projectId: ID!, $fieldId: ID!, $name: String!,
-                                 $color: ProjectV2SingleSelectFieldOptionColor!) {
-                insertProjectV2SingleSelectFieldOption(input: {projectId: $projectId,
-                  fieldId: $fieldId, name: $name, optionName: $name, color: $color}) {
-                  option { id name } } }""",
-                {"projectId": project_id, "fieldId": field["id"],
-                 "name": name, "color": colors[name]})
-            return ensure_columns(cfg, project_id)
+    missing = [w for w in want if w not in options]
+    if missing:
+        payload = [{"id": o["id"], "name": o["name"],
+                    "description": o.get("description") or o["name"],
+                    "color": o["color"]} for o in field["options"]]
+        payload += [{"name": n, "description": n, "color": colors[n]}
+                    for n in missing]
+        gql(cfg, """mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+            updateProjectV2Field(input: {fieldId: $fieldId, singleSelectOptions: $options}) {
+              projectV2Field { ... on ProjectV2SingleSelectField { id } } } }""",
+            {"fieldId": field["id"], "options": payload})
+        return ensure_columns(cfg, project_id)
     return field["id"], options
 
 
@@ -100,11 +122,11 @@ def ensure_issue(cfg, con, ticket):
     body = (f"Factory ticket {ticket['id']} (tier {ticket['tier'] or 'auto'}, "
             f"budget ${float(ticket['budget_usd']):.2f}).\n\n"
             + (ticket["body"] or ""))
-    r = _request(cfg, f"/repos/{cfg['repo_owner']}/{cfg['repo_name']}/issues",
+    r = _request(cfg, f"/repos/{_repo(cfg)}/issues",
                  "POST", {"title": ticket["title"], "body": body})
     con.execute("UPDATE tickets SET issue_number=?, issue_node=?, issue_state='open' "
                 "WHERE id=?",
-                (r["number"], r["node_url"].rsplit("/", 1)[-1], ticket["id"]))
+                (r["number"], r["node_id"], ticket["id"]))
     con.commit()
     return r["number"]
 
@@ -128,17 +150,17 @@ def ensure_item(cfg, con, ticket, project_id):
 
 def set_column(cfg, ticket, project_id, field_id, option_id):
     gql(cfg, """mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!,
-                         $value: ProjectV2FieldValue!) {
+                         $value: String!) {
         updateProjectV2ItemFieldValue(input: {projectId: $projectId, itemId: $itemId,
-          fieldId: $fieldId, value: {singleSelect: $value}}) { projectV2Item { id } } }""",
+          fieldId: $fieldId, value: {singleSelectOptionId: $value}}) { projectV2Item { id } } }""",
         {"projectId": project_id, "itemId": ticket["project_item"],
-         "fieldId": field_id, "value": {"optionId": option_id}})
+         "fieldId": field_id, "value": option_id})
 
 
 def close_issue(cfg, con, ticket):
     if ticket["issue_state"] == "closed" or not ticket["issue_number"]:
         return
-    _request(cfg, f"/repos/{cfg['repo_owner']}/{cfg['repo_name']}"
+    _request(cfg, f"/repos/{_repo(cfg)}"
                   f"/issues/{ticket['issue_number']}", "PATCH", {"state": "closed"})
     con.execute("UPDATE tickets SET issue_state='closed' WHERE id=?", (ticket["id"],))
     con.commit()
@@ -160,8 +182,8 @@ def sync_board(cfg, con, dry=False):
         if dry:
             moves.append((ticket["id"], ticket["status"], column))
             continue
-        ensure_item(cfg, con, ticket, project_id)
-        set_column(cfg, ticket, project_id, field_id, options[column])
+        item = ensure_item(cfg, con, ticket, project_id)
+        set_column(cfg, {"project_item": item}, project_id, field_id, options[column])
         if ticket["status"] in CLOSED_STATUSES:
             close_issue(cfg, con, ticket)
         moves.append((ticket["id"], ticket["status"], column))

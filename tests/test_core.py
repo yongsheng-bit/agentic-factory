@@ -1245,7 +1245,7 @@ class TestBoard(unittest.TestCase):
         con = dbmod.connect(path)
         self.addCleanup(con.close)
         dbmod.init(con)
-        cfg = {"repo_owner": "o", "repo_name": "r", "project_id": "PVT_x",
+        cfg = {"repo": "o/r", "project_id": "PVT_x",
                "gh_token": "t"}
         return board, con, cfg
 
@@ -1278,13 +1278,13 @@ class TestBoard(unittest.TestCase):
 
         def fake(cfg_, url, method, body=None, graphql=False):
             calls.append((url, method))
-            return {"number": 42, "node_url": "https://gh/o/r/issues/42"}
+            return {"number": 42, "node_id": "I_ABC42"}
         with patch.object(board, "_request", fake):
             self.assertEqual(board.ensure_issue(cfg, con, ticket), 42)
         row = con.execute("SELECT issue_number, issue_node, issue_state"
                           " FROM tickets").fetchone()
         self.assertEqual((row["issue_number"], row["issue_node"],
-                          row["issue_state"]), (42, "42", "open"))
+                          row["issue_state"]), (42, "I_ABC42", "open"))
         fresh = con.execute("SELECT * FROM tickets").fetchone()
         self.assertEqual(board.ensure_issue(cfg, con, fresh), 42)
         self.assertEqual(len(calls), 1)
