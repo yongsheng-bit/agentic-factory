@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from . import agent as agentmod
 from . import blast as blastmod
@@ -73,6 +74,24 @@ def cmd_show(args):
     print(f"tier       : {tier} ({why})")
     print(f"pr         : {t['pr_url'] or '-'}")
     print(f"last error : {dbmod.last_failure(con, t['id']) or '-'}")
+
+
+def cmd_runs(args):
+    """Run history with the routing decision, so a tier can be audited later."""
+    _, con = _open(args)
+    rows = dbmod.list_runs(con, ticket_id=args.ticket, limit=args.limit)
+    if not rows:
+        print("(no runs)")
+        return
+    print(f"{'id':>4} {'ticket':>6} {'att':>3} {'status':<9} {'tier':<7} "
+          f"{'tier_reason':<24} {'cost':>6} started")
+    for r in rows:
+        started = time.strftime("%Y-%m-%d %H:%M:%S",
+                                time.localtime(float(r["started_at"])))
+        cost = f"${float(r['cost_usd']):.2f}"
+        print(f"{r['id']:>4} {r['ticket_id']:>6} {r['attempt']:>3} "
+              f"{r['status']:<9} {(r['tier'] or '-'):<7} "
+              f"{(r['tier_reason'] or '-'):<24} {cost:>6} {started}")
 
 
 def cmd_status(args):
@@ -188,6 +207,10 @@ def build_parser():
     s = a.add_parser("list"); s.add_argument("--status"); s.set_defaults(fn=cmd_list)
     s = a.add_parser("show"); s.add_argument("id", type=int)
     s.set_defaults(fn=cmd_show)
+    s = a.add_parser("runs"); s.add_argument("--ticket", type=int,
+                                             help="only runs for this ticket id")
+    s.add_argument("--limit", type=int, default=20)
+    s.set_defaults(fn=cmd_runs)
     a.add_parser("status").set_defaults(fn=cmd_status)
     a.add_parser("pause").set_defaults(fn=cmd_pause)
     a.add_parser("resume").set_defaults(fn=cmd_resume)
