@@ -270,6 +270,20 @@ def spend_today(con):
 
 
 
+def tier_mix(con):
+    """How many runs each model tier actually did, plus how many of them were
+    escalations. `tier_reason LIKE 'escalated%'` is the same string the router
+    writes when a retry is promoted, so the daily view can show escalation
+    without anyone remembering to ask for it."""
+    r = con.execute(
+        "SELECT COALESCE(SUM(CASE WHEN tier='cheap' THEN 1 ELSE 0 END),0) cheap,"
+        " COALESCE(SUM(CASE WHEN tier='strong' THEN 1 ELSE 0 END),0) strong,"
+        " COALESCE(SUM(CASE WHEN tier_reason LIKE 'escalated%' THEN 1 ELSE 0 END),0)"
+        " escalated FROM runs").fetchone()
+    return {"cheap": int(r["cheap"]), "strong": int(r["strong"]),
+            "escalated": int(r["escalated"])}
+
+
 def set_paused(con, flag: bool):
     con.execute("UPDATE control SET paused=? WHERE id=1", (1 if flag else 0,))
 
