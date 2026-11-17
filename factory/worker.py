@@ -131,10 +131,12 @@ def process_once(cfg, con, dry=False):
         pr_url = None
         if cfg.get("push", True):
             try:
-                wt.push_branch(path, branch, cfg.get("remote", "origin"))
+                wt.push_branch(path, branch, cfg.get("remote", "origin"),
+                               token=cfg.get("gh_token"))
                 pr_url = wt.open_pr(path, branch, f"{ticket['ref'] or ''} {ticket['title']}".strip(),
                                     body, base=cfg.get("pr_base", "main"),
-                                    gh_path=cfg.get("gh_path"))
+                                    gh_path=cfg.get("gh_path"),
+                                    token=cfg.get("gh_token"))
             except Exception as exc:
 
                 return _escalate(con, ticket, f"push/PR failed: {exc}")

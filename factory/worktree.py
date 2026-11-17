@@ -8,6 +8,7 @@ one object store, so it costs disk, not clones.
 
 from __future__ import annotations
 
+import base64
 import os
 import re
 import subprocess
@@ -229,6 +230,38 @@ def _identity_env():
     return env
 
 
+def _auth_env(env, token, remote_url=None):
+    """Attach a token as an HTTP header via git's one-shot config env vars.
+
+    Deliberately not a URL with an embedded password: that persists in
+    .git/config, which every linked worktree shares, and shows up in
+    `git remote -v`. One-shot config lives only in this child's environment,
+    and a header keeps the secret out of argv, where a process list could read
+    it. GIT_TERMINAL_PROMPT=0 makes a bad token fail instead of hanging on an
+    invisible credential prompt.
+    """
+    if not token:
+        return env
+    host = "github.com"
+    if remote_url and "://" in remote_url:
+        host = remote_url.split("://", 1)[1].split("/", 1)[0].split("@")[-1]
+    secret = base64.b64encode(("x-access-token:" + token).encode("utf-8")).decode("ascii")
+    idx = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
+    env["GIT_CONFIG_KEY_%d" % idx] = "http.https://%s/.extraheader" % host
+    env["GIT_CONFIG_VALUE_%d" % idx] = "AUTHORIZATION: basic " + secret
+    env["GIT_CONFIG_COUNT"] = str(idx + 1)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    return env
+
+
+def _token_env(token):
+    """Env for the gh CLI: gh prefers GH_TOKEN over the keyring login."""
+    env = _identity_env()
+    if token:
+        env["GH_TOKEN"] = token
+    return env
+
+
 def commit_all(path, message):
     """Stage everything the agent legitimately changed; return False if it changed nothing.
 
@@ -261,8 +294,12 @@ def commit_all(path, message):
     return True
 
 
-def push_branch(path, branch, remote="origin"):
-    _git(["push", "-u", remote, branch], cwd=path)
+def push_branch(path, branch, remote="origin", token=None):
+    url = ""
+    if token:
+        url = _git(["remote", "get-url", remote], cwd=path)
+    env = _auth_env(_identity_env(), token, url)
+    _git(["push", "-u", remote, branch], cwd=path, env=env)
 
 
 def _gh_binary(cfg_path=None):
@@ -279,7 +316,7 @@ def _gh_binary(cfg_path=None):
     return _sh.which("gh")
 
 
-def open_pr(path, branch, title, body, base="main", gh_path=None):
+def open_pr(path, branch, title, body, base="main", gh_path=None, token=None):
     """Open a PR with gh and return its url.
 
     Raises whenever no PR was opened. Returning None used to be the polite
@@ -297,7 +334,7 @@ def open_pr(path, branch, title, body, base="main", gh_path=None):
     r = subprocess.run([gh, "pr", "create", "--head", branch, "--base", base,
                         "--title", title, "--body", body],
                        cwd=path, capture_output=True, text=True, timeout=300,
-                       encoding="utf-8", errors="replace")
+                       encoding="utf-8", errors="replace", env=_token_env(token))
     if r.returncode != 0:
         detail = ((r.stderr or "") + (r.stdout or "")).strip()
         raise RuntimeError(f"gh pr create failed ({r.returncode}): {detail[:400]}")
