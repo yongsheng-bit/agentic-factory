@@ -1,0 +1,11 @@
+# The human gate is only real if these paths need your approval.
+# Everything here is control-plane code: an agent that could quietly edit it
+# could also quietly remove the gate.
+
+/factory/                @yongsheng-bit
+/scripts/local_llm.py    @yongsheng-bit
+/.github/                @yongsheng-bit
+/CODEOWNERS              @yongsheng-bit
+
+# Tests are deliberately NOT owned: adding and fixing tests is the safest work
+# an agent can do, and it must not require a ceremony every time.
