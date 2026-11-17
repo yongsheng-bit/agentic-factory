@@ -411,5 +411,44 @@ class TestCommitAll(unittest.TestCase):
         self.assertFalse(worktree.commit_all(self.dir, "nothing"))
 
 
+class TestCommitIdentity(unittest.TestCase):
+    """A worker on a fresh host has no git identity anywhere.
+
+    CI caught this on the first PR: commit_all passed --author, but git still
+    demands a *committer*, so every commit died with rc=128 "Committer identity
+    unknown / empty ident name (for <runner@...>)". The factory cannot assume
+    the machine it lands on has a configured user, so the identity travels with
+    the process instead of living in someone's global config.
+    """
+
+    def test_commit_needs_no_git_identity_on_the_host(self):
+        import subprocess
+        from unittest import mock
+
+        d = tempfile.mkdtemp()
+        overrides = {"GIT_CONFIG_GLOBAL": os.devnull,
+                     "GIT_CONFIG_SYSTEM": os.devnull,
+                     "GIT_CONFIG_NOSYSTEM": "1"}
+        with mock.patch.dict(os.environ, overrides, clear=False):
+            for k in [k for k in os.environ
+                      if k.startswith(("GIT_AUTHOR_", "GIT_COMMITTER_"))]:
+                del os.environ[k]
+
+            def git(*a):
+                r = subprocess.run(["git", *a], cwd=d, capture_output=True, text=True)
+                assert r.returncode == 0, f"{a}: {r.stderr}"
+
+            git("init", "-q", "-b", "main")
+            with open(os.path.join(d, "new.py"), "w") as fh:
+                fh.write("x = 1\n")
+
+            self.assertTrue(worktree.commit_all(d, "identity-free commit"))
+            who = subprocess.run(
+                ["git", "log", "-1", "--format=%an|%ae|%cn|%ce"], cwd=d,
+                capture_output=True, text=True).stdout.strip()
+        name, email = worktree.AGENT_IDENTITY
+        self.assertEqual(who, f"{name}|{email}|{name}|{email}")
+
+
 if __name__ == "__main__":
     unittest.main()

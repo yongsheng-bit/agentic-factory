@@ -18,7 +18,7 @@ class WorktreeError(RuntimeError):
     pass
 
 
-def _git(args, cwd=None):
+def _git(args, cwd=None, env=None):
     """Run git, retrying children that were killed from OUTSIDE.
 
     On Windows a spawned console app can be terminated by something that is
@@ -34,7 +34,7 @@ def _git(args, cwd=None):
     killed = {0xC000013A, 0xC0000142, 0xC0000005, 0xC0000022}
     for attempt in range(4):
         r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace", timeout=600)
+                           encoding="utf-8", errors="replace", timeout=600, env=env)
         rc = r.returncode
         transient = ((rc is not None and (rc & 0xFFFFFFFF) in killed)
                      or (rc == 128 and "index.lock" in (r.stderr or "")))
@@ -220,6 +220,27 @@ def _is_artifact(rel):
     return rel.endswith(ARTIFACT_SUFFIXES)
 
 
+AGENT_IDENTITY = ("agentic-factory", "bot@localhost")
+
+
+def _identity_env():
+    """Env for `git commit` that carries a committer identity.
+
+    `--author` alone is not enough: git still refuses to commit without a
+    *committer*, and a worker on a fresh host - a CI runner, a new rental box -
+    has no global user.name/user.email. CI caught this as a red e2e job: rc=128
+    "Committer identity unknown / empty ident name (for <runner@...>)". The
+    factory must not depend on whose machine it runs on, so the identity is
+    supplied per-process and never written to anyone's global config.
+    """
+    name, email = AGENT_IDENTITY
+    env = dict(os.environ)
+    for role in ("AUTHOR", "COMMITTER"):
+        env.setdefault(f"GIT_{role}_NAME", name)
+        env.setdefault(f"GIT_{role}_EMAIL", email)
+    return env
+
+
 def commit_all(path, message):
     """Stage everything the agent legitimately changed; return False if it changed nothing.
 
@@ -246,7 +267,9 @@ def commit_all(path, message):
         return False  # nothing staged
     except WorktreeError:
         pass
-    _git(["commit", "-m", message, "--author", "agentic-factory <bot@localhost>"], cwd=path)
+    name, email = AGENT_IDENTITY
+    _git(["commit", "-m", message, "--author", f"{name} <{email}>"],
+         cwd=path, env=_identity_env())
     return True
 
 
