@@ -11,3 +11,5 @@ __pycache__/
 changed.txt
 numstat.txt
 lizard.txt
+
+logs/
