@@ -78,10 +78,10 @@
   <div class="stat"><b>19</b><span>tickets</span></div>
   <div class="stat"><b class="ok">16</b><span>merged</span></div>
   <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
-  <div class="stat"><b>72</b><span>agent runs</span></div>
-  <div class="stat"><b>55</b><span>commits</span></div>
-  <div class="stat"><b>194</b><span>tests green</span></div>
-  <div class="stat"><b>$8.54</b><span>shadow spend</span></div>
+  <div class="stat"><b>76</b><span>agent runs</span></div>
+  <div class="stat"><b>57</b><span>commits</span></div>
+  <div class="stat"><b>196</b><span>tests green</span></div>
+  <div class="stat"><b>$9.12</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
 
@@ -239,6 +239,22 @@
 <p><span class="lbl">Root cause</span> Two stacked Windows traps. First, the base environment carries <b>both</b> <code>PATH</code> and <code>Path</code>; setting only one spelling leaves the twin to win the loader lookup. Second, <code>subprocess.run(["python", …])</code> resolves bare names against the <em>parent's</em> PATH, not the child env block — while the agent's own <code>run_command</code> resolves via <code>shutil.which(path=env["PATH"])</code>, i.e. exactly the overridden path. A probe using the former concluded "broken"; the real tool chain was fine.</p>
 <p><span class="lbl">Fix</span> <code>minimal_env</code> now deletes every case-twin of an overridden name before setting it, and expands a <code>{PATH}</code> placeholder so configs prepend without restating the search path. Probe with the same resolution the tool uses, not with a different one.</p>
 <p><span class="lbl">Lesson</span> On Windows, environment variables are case-insensitive but not case-<em>unique</em> — an override that doesn't remove the twin is an override that may never be read. And verify through the same code path production uses.</p>
+</div>
+
+<div class="incident">
+<h4>P15 · The 1600-token ceiling made new files impossible <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Even after the environment fix (A3), every petro run died at the step ceiling with <b>zero changed files</b>. The transcripts were worse than confusing — steps 8–20 were simply missing, as if the agent had been asleep.</p>
+<p><span class="lbl">Root cause</span> Two harness bugs compounding. The per-step completion cap was hardcoded at 1600 tokens: a reasoning model spends ~1000 tokens thinking, and the tool-call JSON for a new 150-line test file needs 4–6k — so every write attempt was truncated before its JSON closed, the step came back as prose with no call, and the model never could create a file. (The factory's own tickets had survived only because they were small <code>edit_file</code> diffs.) And the loop's no-tool-call branch <code>continue</code>d past the transcript write — the dead steps were invisible exactly where the diagnosis lived. A third run then hung 11 minutes: one request died and <code>chat()</code> retried 3×240 s with no awareness of the run's wall clock.</p>
+<p><span class="lbl">Fix</span> <code>LLM_STEP_MAX_TOKENS</code> (default 6000) replaces the hardcoded cap; no-call steps are now transcribed with their prose; the transcript hole that hid them is closed.</p>
+<p><span class="lbl">Lesson</span> An output cap sized for text replies silently disables the most important tool. And when a transcript shows fewer steps than the run counter, suspect the logger before the model — invisible steps hid the actual failure for two full debugging rounds.</p>
+</div>
+
+<div class="incident">
+<h4>P16 · Two ticks, one engine, mutual destruction <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> A manual tick and the 15-minute scheduler tick ran concurrently and each built a different ticket; both slowed toward the wall-clock cap (a trivial completion took 30 s mid-build).</p>
+<p><span class="lbl">Root cause</span> The busy-guard (<code>running_pids</code>) was checked once at tick start; a tick begun while another was mid-build saw no running rows yet — or saw the other config's DB, which is a different file. On a single inference engine, concurrency is negative throughput: each stream halves the other's tokens/second until the 900 s cap kills both.</p>
+<p><span class="lbl">Fix</span> <code>process_once</code> now takes a cross-process OS lock (msvcrt/fcntl, auto-released on process death — verified with a two-process probe) before claiming any ticket, below every entry point and across every config. Overlapping ticks return <code>busy</code> instead of stacking builds.</p>
+<p><span class="lbl">Lesson</span> A guard that checks "is anything running" at startup only prevents races it happens to see; put the lock where the work starts, not where the scheduler decides. On one engine, one build — globally.</p>
 </div>
 
 <h3>Agent behavior</h3>
