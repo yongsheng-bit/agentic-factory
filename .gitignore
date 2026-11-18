@@ -4,6 +4,9 @@ cli-test.db
 cli-test.db-*
 cli-test.json
 factory.json
+factory-petro.json
+petro.db
+petro.db-*
 __pycache__/
 *.pyc
 .factory-worktrees/

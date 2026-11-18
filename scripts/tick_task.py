@@ -16,6 +16,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "logs", "tick.log")
 MAX_LOG = 1_000_000
 
+CONFIGS = ["factory.json", "factory-petro.json"]
+
 
 def resolve_token():
     """The gh CLI login is the one credential; a pasted PAT expires and dies.
@@ -57,10 +59,18 @@ def main():
     with open(LOG, "a", encoding="utf-8") as fh:
         fh.write("\n=== %s ===\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
         fh.flush()
-        rc = subprocess.run(
-            [sys.executable, "-m", "factory.cli",
-             "-c", os.path.join(ROOT, "factory.json"), "tick", "--max", "2"],
-            cwd=ROOT, env=env, stdout=fh, stderr=fh, timeout=3000).returncode
+        rc = 0
+        for name in CONFIGS:
+            cfg_path = os.path.join(ROOT, name)
+            if not os.path.exists(cfg_path):
+                continue
+            fh.write("--- %s ---\n" % name)
+            fh.flush()
+            one = subprocess.run(
+                [sys.executable, "-m", "factory.cli",
+                 "-c", cfg_path, "tick", "--max", "2"],
+                cwd=ROOT, env=env, stdout=fh, stderr=fh, timeout=3000).returncode
+            rc = rc or one
         fh.write("exit=%d\n" % rc)
     return rc
 

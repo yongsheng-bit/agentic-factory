@@ -55,7 +55,7 @@ def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
     except issuesmod.IssueError as exc:
         s["alerts"].append(f"issue import failed: {exc}")
 
-    if board:
+    if board and cfg.get("project_id"):
         try:
             boardmod.sync_board(cfg, con)
         except Exception as exc:

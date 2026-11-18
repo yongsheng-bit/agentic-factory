@@ -187,9 +187,14 @@ class TestTick(unittest.TestCase):
         self.assertIn("sync failed", " ".join(s["alerts"]))
 
     def test_board_failure_does_not_stop_building(self):
+        self.cfg["project_id"] = "PVT_test"
         s, _ = self._run(["pr_open http://p/2", "idle"], board_fail=True)
         self.assertIsNotNone(s["board_error"])
         self.assertEqual(len(s["outcomes"]), 2)
+
+    def test_board_skipped_without_project_id(self):
+        s, _ = self._run(["idle"], board_fail=True)
+        self.assertIsNone(s["board_error"])
 
     def test_paused_queue_does_not_build(self):
         dbmod.set_paused(self.con, True)
