@@ -73,6 +73,8 @@ Rules:
 - Use the tools. Never describe a file you have not read with read_file.
 - Read before you write. Do not guess at file contents.
 - Make the smallest change that satisfies the task. Do not refactor neighbours.
+- To add a test class or section to a large existing file, use append_file; never \
+rewrite a large file with write_file, and never keep exploring instead of editing.
 - Do NOT run git commands, install packages, or use the network. The orchestrator \
 commits, pushes and opens the pull request.
 - Verify with run_command when tests exist (python -m pytest, npm test, go test, ...). Run ONE command per call: there is no shell, so no pipes, no redirection, no &&.
@@ -107,6 +109,15 @@ TOOLS = [
             "old_text": {"type": "string", "description": "must match exactly, once"},
             "new_text": {"type": "string"}},
             "required": ["path", "old_text", "new_text"]}}},
+    {"type": "function", "function": {
+        "name": "append_file",
+        "description": "Append content to the END of a file (creates it if missing). "
+                       "Use this to add a new test class or section to a large file "
+                       "instead of rewriting the whole file.",
+        "parameters": {"type": "object", "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"}},
+            "required": ["path", "content"]}}},
     {"type": "function", "function": {
         "name": "list_files",
         "description": "List repository files, optionally filtered by a glob like "
@@ -230,6 +241,25 @@ def t_edit(a):
         fh.write(text.replace(old, new, 1))
     CTX.touched.add(rel)
     return f"edited {rel}"
+
+
+def t_append(a):
+    r, err = _resolve(a.get("path", ""))
+    if err:
+        return err
+    p, rel = r
+    content = str(a.get("content", ""))
+    if not content:
+        return "error: content is empty"
+    existing = ""
+    if os.path.isfile(p):
+        with open(p, "r", encoding="utf-8", errors="replace") as fh:
+            existing = fh.read()
+    with open(p, "w", encoding="utf-8", newline="") as fh:
+        fh.write(existing + ("" if not existing or existing.endswith("\n") else "\n")
+                 + content + ("" if content.endswith("\n") else "\n"))
+    CTX.touched.add(rel)
+    return f"appended to {rel}"
 
 
 def _walk():
@@ -380,6 +410,7 @@ def t_run(a):
 
 
 DISPATCH = {"read_file": t_read, "write_file": t_write, "edit_file": t_edit,
+            "append_file": t_append,
             "list_files": t_list, "search": t_search, "run_command": t_run}
 
 
