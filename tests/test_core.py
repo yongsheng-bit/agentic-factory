@@ -1448,6 +1448,48 @@ class TestParseTickets(unittest.TestCase):
 
     def test_empty_text_yields_no_rows_and_no_error(self):
         self.assertEqual(climod.parse_tickets(""), ([], None))
+class TestAddFromFile(unittest.TestCase):
+    """`factory add --from-file FILE` is how a backlog enters the queue in bulk.
+
+    Only the real command line proves the wiring: the parser has to accept a
+    missing title when --from-file is present, the reader has to turn each JSONL
+    line into a row, and the queue has to end up holding both tickets as queued.
+    """
+
+    def test_two_line_jsonl_imports_two_queued_tickets(self):
+        import contextlib
+        import io
+        import json
+
+        from factory import cli
+        fd, db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        fd, cfg = tempfile.mkstemp(suffix=".json")
+        os.close(fd)
+        fd, src = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        with open(cfg, "w", encoding="utf-8") as fh:
+            json.dump({"repo": ".", "db": db}, fh)
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"title": "first import", "body": "one",
+                                 "tier": "cheap"}) + "\n")
+            fh.write(json.dumps({"title": "second import", "body": "two",
+                                 "tier": "strong"}) + "\n")
+        con = dbmod.connect(db)
+        dbmod.init(con)
+        self.addCleanup(con.close)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["-c", cfg, "add", "--from-file", src])
+        printed = buf.getvalue().split()
+
+        rows = dbmod.list_tickets(con, status="queued")
+        self.assertEqual([r["title"] for r in rows],
+                         ["second import", "first import"])
+        self.assertEqual({r["status"] for r in rows}, {"queued"})
+        self.assertEqual({r["tier"] for r in rows}, {"cheap", "strong"})
+        self.assertEqual(printed, [str(r["id"]) for r in reversed(rows)])
 
 
 if __name__ == "__main__":
