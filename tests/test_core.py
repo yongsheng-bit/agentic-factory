@@ -1529,6 +1529,7 @@ class TestSpendToday(unittest.TestCase):
         self.assertAlmostEqual(dbmod.spend_today(con, now=time.time()), 0.0)
 
 
+
 class TestVersionCommand(unittest.TestCase):
     """`factory version` names the code that is actually installed.
 
@@ -1552,6 +1553,65 @@ class TestVersionCommand(unittest.TestCase):
         printed = buf.getvalue().strip()
         self.assertTrue(printed)
         self.assertEqual(printed, factory.__version__)
+
+
+class TestBoardIssueNode(unittest.TestCase):
+    """Tickets imported by `factory import-issues` carry an issue_number but no
+    issue_node, so ensure_item() has to fetch the node id before the project
+    mutation: contentId=NULL is a GraphQL type error."""
+
+    def _env(self):
+        from factory import board, db as dbmod
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.addCleanup(os.unlink, path)
+        con = dbmod.connect(path)
+        self.addCleanup(con.close)
+        dbmod.init(con)
+        cfg = {"repo": "o/r", "project_id": "PVT_x", "gh_token": "t"}
+        return board, con, cfg
+
+    def _fake_http(self, calls):
+        """Stand-in for the whole HTTP layer: REST issue lookup + GraphQL."""
+        def fake(cfg_, url, method, body=None, graphql=False):
+            calls.append((url, method, body))
+            if graphql:
+                return {"data": {"addProjectV2ItemById": {"item": {"id": "PVTI_1"}}}}
+            return {"node_id": "I_NODE7"}
+        return fake
+
+    def test_missing_issue_node_is_looked_up_before_the_mutation(self):
+        board, con, cfg = self._env()
+        dbmod.add_ticket(con, "t", source="github-issue", ref="#7", issue_number=7)
+        ticket = con.execute("SELECT * FROM tickets").fetchone()
+        self.assertIsNone(ticket["issue_node"])
+        calls = []
+        with patch.object(board, "_request", self._fake_http(calls)):
+            self.assertEqual(board.ensure_item(cfg, con, ticket, "PVT_x"), "PVTI_1")
+        self.assertIn(("/repos/o/r/issues/7", "GET", None), calls)
+        mutation = [c for c in calls if c[1] == "POST" and c[2] is not None][-1]
+        self.assertEqual(mutation[2]["variables"],
+                         {"projectId": "PVT_x", "contentId": "I_NODE7"})
+        self.assertLess(calls.index(("/repos/o/r/issues/7", "GET", None)),
+                        calls.index(mutation))
+        row = con.execute("SELECT issue_number, issue_node, project_item"
+                          " FROM tickets").fetchone()
+        self.assertEqual((row["issue_number"], row["issue_node"],
+                          row["project_item"]), (7, "I_NODE7", "PVTI_1"))
+
+    def test_known_issue_node_is_not_looked_up_again(self):
+        board, con, cfg = self._env()
+        dbmod.add_ticket(con, "t", source="github-issue", ref="#7", issue_number=7)
+        con.execute("UPDATE tickets SET issue_node='I_ABC42'")
+        ticket = con.execute("SELECT * FROM tickets").fetchone()
+        calls = []
+        with patch.object(board, "_request", self._fake_http(calls)):
+            self.assertEqual(board.ensure_item(cfg, con, ticket, "PVT_x"), "PVTI_1")
+        gets = [c for c in calls if c[1] == "GET"]
+        self.assertLessEqual(len(gets), 1)
+        self.assertEqual(gets, [], "node id already known, nothing to look up")
+        self.assertEqual(con.execute("SELECT issue_node FROM tickets").fetchone()[0],
+                         "I_ABC42")
 
 
 if __name__ == "__main__":

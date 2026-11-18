@@ -306,7 +306,7 @@
 </ul>
 <p>Deliberately parked:</p>
 <ul>
-  <li><b>Second reviewer account</b> — merges are currently admin-bypass (one GitHub account). A second account gives the human gate real teeth; <code>scripts/enable_review_gate.sh</code> is ready to run the day it exists. <span class="num">David: "later".</span></li>
+  <li><b>Second reviewer account</b> — main already requires PRs + 4 status checks; what it lacks is an approving review from a <em>second</em> account (admin bypass stays until then). <code>scripts/enable_review_gate.sh</code> is ready to run the day it exists. <span class="num">David: "later".</span></li>
   <li><b>Real strong tier</b> — both tiers hit the same Qwen engine by decision: the 3090s run <em>one engine at a time</em>, and swapping to DeepSeek per ticket would take the cheap tier (and this chat) offline. Escalation to <code>strong</code> still works — it just routes to the same model until a second box exists.</li>
 </ul>
 
