@@ -1656,5 +1656,32 @@ class TestBoardIssueNode(unittest.TestCase):
                          "I_ABC42")
 
 
+class TestEngineLock(unittest.TestCase):
+    def setUp(self):
+        fd, self.path = tempfile.mkstemp(suffix=".lock")
+        os.close(fd)
+
+    def tearDown(self):
+        os.unlink(self.path)
+
+    def test_lock_is_exclusive_and_releasable(self):
+        held = workermod._engine_lock(self.path)
+        self.assertIsNotNone(held)
+        self.assertIsNone(workermod._engine_lock(self.path))
+        workermod._release_engine_lock(held)
+        again = workermod._engine_lock(self.path)
+        self.assertIsNotNone(again)
+        workermod._release_engine_lock(again)
+
+    def test_process_once_returns_busy_when_locked(self):
+        con = fresh_db(self)
+        held = workermod._engine_lock(self.path)
+        try:
+            with patch.object(workermod, "LOCK_PATH", self.path):
+                self.assertEqual(workermod.process_once({}, con), "busy")
+        finally:
+            workermod._release_engine_lock(held)
+
+
 if __name__ == "__main__":
     unittest.main()

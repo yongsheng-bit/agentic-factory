@@ -46,6 +46,7 @@ MAX_STEPS = int(os.environ.get("LLM_MAX_STEPS", "20"))
 MAX_TOTAL_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "600000"))
 MAX_CONTEXT_TOKENS = int(os.environ.get("LLM_MAX_CONTEXT", "100000"))
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "240"))
+STEP_MAX_TOKENS = int(os.environ.get("LLM_STEP_MAX_TOKENS", "6000"))
 TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 MAX_TOOL_CHARS = 6000
 MAX_FILES_LISTED = 200
@@ -416,9 +417,16 @@ DISPATCH = {"read_file": t_read, "write_file": t_write, "edit_file": t_edit,
 
 
 def chat(messages, attempts=3):
+    """One completion, with a per-step output cap.
+
+    The cap must fit a reasoning pass plus a full write_file of a real module:
+    at the old 1600 the thinking tokens ate the budget, the tool-call JSON was
+    truncated before it closed, and the step came back as prose with no call -
+    so an agent could never create a new file, only nudge-edit small ones.
+    """
     body = json.dumps({"model": MODEL, "messages": messages, "tools": TOOLS,
                        "tool_choice": "auto", "temperature": TEMPERATURE,
-                       "max_tokens": 1600}).encode()
+                       "max_tokens": STEP_MAX_TOKENS}).encode()
     last = None
     for i in range(attempts):
         try:
@@ -511,6 +519,17 @@ def main():
         prose = (msg.get("content") or "").strip()
 
         if not calls:
+            if transcript_path:
+                try:
+                    with open(transcript_path, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps({
+                            "step": steps, "prompt_tokens": last_prompt,
+                            "completion_tokens": last_completion,
+                            "calls": ["(no tool call)"], "prose": prose[:300],
+                            "touched": sorted(CTX.touched)[-6:],
+                        }) + "\n")
+                except OSError:
+                    pass
             if steps >= MAX_STEPS - 1:
                 summary = prose
                 break

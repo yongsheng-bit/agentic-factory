@@ -67,6 +67,8 @@ def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
             s["outcomes"].append(out)
             if out == "idle":
                 break
+            if out == "busy":
+                break
             s["idle"] = False
             if out.startswith("pr_open"):
                 s["alerts"].append(f"PR ready: {out.split(' ', 1)[-1]}")

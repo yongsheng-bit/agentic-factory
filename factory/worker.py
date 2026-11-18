@@ -8,12 +8,76 @@ be unspent. Gates run on the produced diff, never on the agent's claims about it
 
 from __future__ import annotations
 
+import os
 import time
 
 from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
 from . import gates, notify, worktree as wt
+
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
+LOCK_PATH = os.environ.get(
+    "FACTORY_LOCK_PATH", os.path.join(os.path.expanduser("~"),
+                                      ".agentic-factory.lock"))
+
+
+def _engine_lock(path=None):
+    """Take the one-build-at-a-time lock, or return None if it is held.
+
+    The line has a single inference engine, so two concurrent builds are not
+    throughput - they halve each other's tokens-per-second until the wall-clock
+    cap kills both. Overlapping scheduler ticks make that concurrency easy to
+    reach, so the guard lives in the worker, below every entry point.
+    """
+    fh = open(path or LOCK_PATH, "a+")
+    try:
+        if msvcrt is not None:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        elif fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(os.getpid()))
+        fh.flush()
+        return fh
+    except OSError:
+        try:
+            fh.close()
+        except OSError:
+            pass
+        return None
+
+
+def _release_engine_lock(fh):
+    try:
+        fh.seek(0)
+        if msvcrt is not None:
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        elif fcntl is not None:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    fh.close()
+
+
+def process_once(cfg, con, dry=False):
+    """Handle at most one ticket under the engine lock. Returns an outcome."""
+    lock = _engine_lock()
+    if lock is None:
+        return "busy"
+    try:
+        return _process_once(cfg, con, dry=dry)
+    finally:
+        _release_engine_lock(lock)
 
 
 def _escalate(con, ticket, cfg, why):
@@ -23,7 +87,7 @@ def _escalate(con, ticket, cfg, why):
     return "escalated"
 
 
-def process_once(cfg, con, dry=False):
+def _process_once(cfg, con, dry=False):
     """Handle at most one ticket. Returns a one-word outcome."""
     if dbmod.is_paused(con):
         return "paused"
