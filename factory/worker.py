@@ -100,6 +100,18 @@ def process_once(cfg, con, dry=False):
 
         diff_text = wt.diff_text(path, base=base_sha)
 
+        junk = None
+        if "Binary files" in diff_text:
+            junk = "diff contains binary files"
+        elif ("test" in (ticket["title"] + " " + (ticket["body"] or "")).lower()
+              and "tests/" not in diff_text):
+            junk = "ticket asks for tests but diff touches no test files"
+        if junk:
+            dbmod.bump_attempt(con, ticket["id"])
+            if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
+                return _escalate(con, ticket, junk)
+            dbmod.finish(con, ticket["id"], "queued")
+            return f"retry ({junk})"
 
         gate = gates.check(path, diff=diff_text)
         if not gate["ok"]:
