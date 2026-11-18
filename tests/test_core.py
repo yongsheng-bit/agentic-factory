@@ -407,6 +407,92 @@ class TestCommitAll(unittest.TestCase):
         self.assertFalse(worktree.commit_all(self.dir, "nothing"))
 
 
+class TestRetryPush(unittest.TestCase):
+    """A retry must be able to overwrite the branch attempt 1 pushed.
+
+    Branch names carry no attempt number, so attempt 2 lands on a remote head
+    it does not descend from and a plain push dies as non-fast-forward, taking
+    the ticket with it. push_branch clears the agent-owned head first, and
+    delete_remote_branch only ever clears `agent/*`: a bare origin in a temp
+    dir is the only honest way to test both halves.
+    """
+
+    def setUp(self):
+        import subprocess
+        self.dir = tempfile.mkdtemp()
+        self.origin = os.path.join(self.dir, "origin.git")
+        self.repo = os.path.join(self.dir, "repo")
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        self.env = env
+
+        def git(*a):
+            r = subprocess.run(["git", *a], capture_output=True, text=True,
+                               env=env, cwd=self.repo)
+            assert r.returncode == 0, f"{a}: {r.stderr}"
+            return r
+        self.g = git
+        os.makedirs(self.repo)
+        git("init", "-q", "--bare", self.origin)
+        git("init", "-q", "-b", "main", self.repo)
+        with open(os.path.join(self.repo, "app.py"), "w") as fh:
+            fh.write("print(1)\n")
+        git("add", "-A")
+        git("commit", "-qm", "seed")
+        git("remote", "add", "origin", self.origin)
+        git("push", "-q", "origin", "main")
+
+    def _commit_on(self, branch, name):
+        self.g("checkout", "-q", "-B", branch)
+        with open(os.path.join(self.repo, name), "w") as fh:
+            fh.write(name + "\n")
+        self.g("add", "-A")
+        self.g("commit", "-qm", name)
+        return self.g("rev-parse", "HEAD").stdout.strip()
+
+    def _remote_sha(self, branch):
+        out = self.g("ls-remote", "--heads", "origin", branch).stdout.split()
+        return out[0] if out else ""
+
+    def test_first_attempt_pushes_and_a_diverged_retry_is_rejected(self):
+        self._commit_on("agent/t1-1", "one.py")
+        worktree.push_branch(self.repo, "agent/t1-1", attempt=1)
+        self.assertEqual(self._remote_sha("agent/t1-1"),
+                         self.g("rev-parse", "HEAD").stdout.strip())
+        self.g("checkout", "-q", "main")
+        self._commit_on("agent/t1-1", "two.py")
+        with self.assertRaises(worktree.WorktreeError) as cm:
+            worktree.push_branch(self.repo, "agent/t1-1", attempt=1)
+        self.assertIn("non-fast-forward", str(cm.exception))
+        self.assertNotEqual(self._remote_sha("agent/t1-1"),
+                            self.g("rev-parse", "HEAD").stdout.strip())
+
+    def test_retry_attempt_clears_the_stale_branch_and_pushes(self):
+        self._commit_on("agent/t1-1", "one.py")
+        worktree.push_branch(self.repo, "agent/t1-1", attempt=1)
+        self.g("checkout", "-q", "main")
+        new = self._commit_on("agent/t1-1", "two.py")
+        worktree.push_branch(self.repo, "agent/t1-1", attempt=2)
+        self.assertEqual(self._remote_sha("agent/t1-1"), new)
+
+    def test_attempt_two_with_nothing_on_the_remote_still_pushes(self):
+        new = self._commit_on("agent/t1-1", "one.py")
+        worktree.push_branch(self.repo, "agent/t1-1", attempt=2)
+        self.assertEqual(self._remote_sha("agent/t1-1"), new)
+
+    def test_non_agent_branches_are_never_deleted(self):
+        self._commit_on("main", "one.py")
+        before = self._remote_sha("main")
+        with self.assertRaises(worktree.WorktreeError) as cm:
+            worktree.delete_remote_branch(self.repo, "main")
+        self.assertIn("only agent-owned branches", str(cm.exception))
+        self.assertEqual(self._remote_sha("main"), before)
+
+    def test_deleting_an_absent_branch_is_silent(self):
+        worktree.delete_remote_branch(self.repo, "agent/never-pushed-1")
+        self.assertEqual(self._remote_sha("agent/never-pushed-1"), "")
+
+
 class TestCommitIdentity(unittest.TestCase):
     """A worker on a fresh host has no git identity anywhere.
 
