@@ -132,15 +132,28 @@ def ensure_issue(cfg, con, ticket):
 
 
 def ensure_item(cfg, con, ticket, project_id):
-    """Add the issue to the board once; the project item id rides on the row."""
+    """Add the issue to the board once; the project item id rides on the row.
+
+    Issues imported by `factory import-issues` carry a number but no node id,
+    and ensure_issue returns early for them, so the node id is fetched from
+    the REST issue endpoint and recorded here: contentId=NULL is a GraphQL
+    type error, not an empty board.
+    """
     if ticket["project_item"]:
         return ticket["project_item"]
     ensure_issue(cfg, con, ticket)
-    row = con.execute("SELECT issue_node FROM tickets WHERE id=?",
+    row = con.execute("SELECT issue_number, issue_node FROM tickets WHERE id=?",
                       (ticket["id"],)).fetchone()
+    node = row["issue_node"]
+    if not node:
+        r = _request(cfg, f"/repos/{_repo(cfg)}/issues/{row['issue_number']}", "GET")
+        node = r["node_id"]
+        con.execute("UPDATE tickets SET issue_node=? WHERE id=?",
+                    (node, ticket["id"]))
+        con.commit()
     d = gql(cfg, """mutation($projectId: ID!, $contentId: ID!) {
         addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
-          item { id } } }""", {"projectId": project_id, "contentId": row["issue_node"]})
+          item { id } } }""", {"projectId": project_id, "contentId": node})
     item = d["addProjectV2ItemById"]["item"]["id"]
     con.execute("UPDATE tickets SET project_item=? WHERE id=?",
                 (item, ticket["id"]))
