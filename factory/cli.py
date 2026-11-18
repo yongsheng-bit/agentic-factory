@@ -8,6 +8,7 @@ import os
 import sys
 import time
 
+from . import __version__
 from . import agent as agentmod
 from . import blast as blastmod
 from . import board as boardmod
@@ -322,6 +323,11 @@ def cmd_tier(args):
     print(f"would route: {decided} ({why})")
 
 
+def cmd_version(args):
+    """Print the package version, so a deployed checkout can be identified."""
+    print(__version__)
+
+
 def build_parser():
     """Construct the whole CLI, subcommands included.
 
@@ -401,6 +407,7 @@ def build_parser():
 
     s = a.add_parser("gate"); s.add_argument("--path"); s.set_defaults(fn=cmd_gate)
     s = a.add_parser("blast"); s.add_argument("--path"); s.set_defaults(fn=cmd_blast)
+    a.add_parser("version").set_defaults(fn=cmd_version)
     return p
 
 

@@ -1529,5 +1529,30 @@ class TestSpendToday(unittest.TestCase):
         self.assertAlmostEqual(dbmod.spend_today(con, now=time.time()), 0.0)
 
 
+class TestVersionCommand(unittest.TestCase):
+    """`factory version` names the code that is actually installed.
+
+    A factory that runs unattended needs one command that touches nothing - no
+    config, no database, no network - so an operator can tell which build a
+    checkout is running.
+    """
+
+    def test_version_prints_the_package_version_and_exits_zero(self):
+        import contextlib
+        import io
+
+        import factory
+        from factory import cli
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                cli.main(["version"])
+        except SystemExit as exc:
+            self.assertEqual(exc.code, 0)
+        printed = buf.getvalue().strip()
+        self.assertTrue(printed)
+        self.assertEqual(printed, factory.__version__)
+
+
 if __name__ == "__main__":
     unittest.main()
