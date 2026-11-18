@@ -62,7 +62,7 @@ Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
 | Command | Flags | What it does |
 |---|---|---|
 | `init` | — | Create the sqlite queue at `db` in the config |
-| `add <title>` | `--body`, `--ref`, `--source`, `--budget`, `--retries`, `--blast {low,medium,high}`, `--tier {cheap,strong}` | Queue a ticket; `--blast` pins the blast rating, `--tier` pins the model tier instead of letting the router decide |
+| `add <title>` | `--body`, `--ref`, `--source`, `--budget`, `--retries`, `--blast {low,medium,high}`, `--tier {cheap,strong}`, `--from-file FILE` | Queue a ticket; `--blast` pins the blast rating, `--tier` pins the model tier instead of letting the router decide, `--from-file` bulk imports JSONL (one object per line, `title` required) |
 | `list` | `--status` | Ticket table: status, attempts, spend, blast, tier, ref |
 | `status` | — | Kill-switch state, today's spend vs the daily cap, status counts, tier mix, merged-without-review count |
 | `show <id>` | — | One ticket in full: blast + reason, tier + reason, spend vs budget, PR URL, last failure |
