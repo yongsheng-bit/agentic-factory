@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agentic Software Factory — Build Log</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --fg: #e6edf3; --dim: #8b949e;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+    --amber: #d29922; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.25rem 6rem;
+    background: var(--bg); color: var(--fg);
+    font: 15px/1.65 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  main { max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.7rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.25rem; margin: 2.5rem 0 .75rem; padding-bottom: .35rem;
+       border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1rem; margin: 1.4rem 0 .4rem; }
+  p, li { color: var(--fg); }
+  .sub { color: var(--dim); margin: 0 0 1.25rem; }
+  .updated { color: var(--dim); font-size: .85rem; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { background: #21262d; border: 1px solid var(--border); border-radius: 4px;
+         padding: .05em .35em; font: .85em ui-monospace, "Cascadia Code", Consolas, monospace; }
+  table { border-collapse: collapse; width: 100%; margin: .75rem 0; font-size: .9rem; }
+  th, td { border: 1px solid var(--border); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+  th { background: var(--panel); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+           gap: .6rem; margin: 1.25rem 0; }
+  .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+          padding: .7rem .9rem; }
+  .stat b { display: block; font-size: 1.35rem; }
+  .stat span { color: var(--dim); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+  .ok { color: var(--green); } .bad { color: var(--red); } .warn { color: var(--amber); }
+  .violet { color: var(--purple); }
+  .incident { background: var(--panel); border: 1px solid var(--border);
+              border-left: 3px solid var(--red); border-radius: 6px;
+              padding: .8rem 1rem; margin: .8rem 0; }
+  .incident.fix { border-left-color: var(--green); }
+  .incident h4 { margin: 0 0 .4rem; font-size: .95rem; }
+  .incident p { margin: .3rem 0; font-size: .9rem; }
+  .incident .lbl { color: var(--dim); font-weight: 600; font-size: .78rem;
+                   text-transform: uppercase; letter-spacing: .04em; }
+  .tag { display: inline-block; font-size: .72rem; font-weight: 600; padding: .05rem .5rem;
+         border-radius: 999px; border: 1px solid var(--border); color: var(--dim);
+         margin-left: .5rem; vertical-align: middle; }
+  .tag.sec { color: var(--red); border-color: var(--red); }
+  .tag.pipe { color: var(--accent); border-color: var(--accent); }
+  .tag.agent { color: var(--amber); border-color: var(--amber); }
+  .tag.spec { color: var(--purple); border-color: var(--purple); }
+  .pipeline { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 1rem 0; }
+  .pipeline .step { background: var(--panel); border: 1px solid var(--border);
+                    border-radius: 6px; padding: .45rem .7rem; font-size: .85rem; }
+  .pipeline .arrow { color: var(--dim); }
+  .callout { border: 1px solid var(--amber); background: rgba(210,153,34,.08);
+             border-radius: 6px; padding: .7rem 1rem; margin: 1rem 0; font-size: .9rem; }
+  .callout.blue { border-color: var(--accent); background: rgba(88,166,255,.08); }
+  .num { color: var(--dim); }
+  footer { margin-top: 3rem; color: var(--dim); font-size: .8rem;
+           border-top: 1px solid var(--border); padding-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Agentic Software Factory — Build Log</h1>
+<p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 11:54 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+
+<div class="stats">
+  <div class="stat"><b>19</b><span>tickets</span></div>
+  <div class="stat"><b class="ok">16</b><span>merged</span></div>
+  <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
+  <div class="stat"><b>61</b><span>agent runs</span></div>
+  <div class="stat"><b>42</b><span>commits</span></div>
+  <div class="stat"><b>145+</b><span>tests green</span></div>
+  <div class="stat"><b>$7.38</b><span>shadow spend</span></div>
+  <div class="stat"><b class="ok">0</b><span>blocked</span></div>
+</div>
+
+<h2 id="update">How this log is kept current</h2>
+<p>This file lives at <code>docs/BUILDLOG.html</code> and is updated <b>as part of every factory session</b>, committed with the batch it describes:</p>
+<ol>
+  <li>After each batch or incident: add an incident card (symptom → root cause → fix → lesson), update the ledger, stats, and the <em>Last updated</em> stamp.</li>
+  <li>Numbers come from the tools, never from memory: tickets/runs from <code>factory.db</code>, PRs from <code>gh pr list --state all</code>, commits from <code>git log</code>.</li>
+  <li>Incidents are grouped by category — <span class="tag sec">sandbox</span> <span class="tag pipe">pipeline</span> <span class="tag agent">agent behavior</span> <span class="tag spec">ticket spec</span> — and numbered so they can be referenced (S1, P3, A1, T2…).</li>
+  <li>Commit message convention: <code>docs: build log — &lt;what changed&gt;</code>.</li>
+</ol>
+
+<h2>The pipeline</h2>
+<div class="pipeline">
+  <div class="step">ticket queue<br><span class="num">SQLite + CLI</span></div><div class="arrow">→</div>
+  <div class="step">tier router<br><span class="num">cheap / strong / auto</span></div><div class="arrow">→</div>
+  <div class="step">git worktree<br><span class="num">isolated branch</span></div><div class="arrow">→</div>
+  <div class="step">agent loop<br><span class="num">Qwen on 3090s</span></div><div class="arrow">→</div>
+  <div class="step">gates<br><span class="num">secrets · blast · junk</span></div><div class="arrow">→</div>
+  <div class="step">CI<br><span class="num">Linux + Windows</span></div><div class="arrow">→</div>
+  <div class="step">PR + board<br><span class="num">GitHub Projects</span></div><div class="arrow">→</div>
+  <div class="step">human merge<br><span class="num">you</span></div>
+</div>
+<p>Guardrails: kill switch file, daily budget (resets at <b>local</b> midnight), per-ticket budget, step/token governor, allowlisted env, no git/network/destructive commands for the agent, per-step transcripts at <code>%LOCALAPPDATA%/Temp/agentic-factory-prompts/</code>.</p>
+
+<h2>Timeline</h2>
+<table>
+<tr><th>Day</th><th>What happened</th></tr>
+<tr><td><b>Nov 16</b></td><td>Bootstrap: queue, worktree isolation, gates, kill switch; wired to the local 3090 endpoint (Qwen, ~100 tok/s); sandbox leaks closed same day; first Linux CI run caught three Windows-only bugs → dual-OS CI from then on; CODEOWNERS protects control-plane paths.</td></tr>
+<tr><td><b>Nov 17</b></td><td>The factory builds itself: tickets 1–11 shipped by the agent (PRs #1–#19) — <code>show</code>/<code>runs</code>/<code>retry</code>/<code>tier</code>/<code>status</code>, bulk <code>add --from-file</code>, <code>sync</code> (PR verdict → queue), scoped factory token, Projects board. Two of those tickets were bugs <em>in the factory itself</em> (#17 budget timezone, #18 stale-branch retry).</td></tr>
+<tr><td><b>Nov 18</b></td><td>Hardening day: <code>append_file</code> tool ends the test-writing thrash; junk-PR gate after PR #37; the last blocked tickets turn out to be <em>bad ticket specs</em>, get split, and ship first try. Board closes at <b>19/19 Done, zero blocked</b>.</td></tr>
+</table>
+
+<h2 id="incidents">Incident log — what broke and what it taught us</h2>
+<p>Every entry is a real failure from a real run, in the order it was hit. This is the most valuable section of the repo.</p>
+
+<h3>Sandbox &amp; security</h3>
+
+<div class="incident">
+<h4>S1 · The agent could read your tokens and write outside the worktree <span class="tag sec">sandbox</span></h4>
+<p><span class="lbl">Symptom</span> <code>run_command</code> was the one shell surface — and it inherited the full environment (GitHub token included) and allowed shell redirection to any path on disk.</p>
+<p><span class="lbl">Root cause</span> Default-trust subprocess: <code>subprocess.run(shell=True)</code> with no env filtering; deny-list covered commands, not redirection.</p>
+<p><span class="lbl">Fix</span> Allowlisted environment (PR #6) — the agent gets PATH and nothing else; redirection outside the worktree refused; path guards resolve every path and reject escapes and <code>.git</code>.</p>
+<p><span class="lbl">Lesson</span> An agent's environment is part of the blast radius. Default-deny env, then add what's proven needed.</p>
+</div>
+
+<div class="incident">
+<h4>S2 · The human gate was silently dead <span class="tag sec">sandbox</span></h4>
+<p><span class="lbl">Symptom</span> Every change rated <code>low</code> blast radius, so nothing ever needed David's approval — including changes to the gates themselves.</p>
+<p><span class="lbl">Root cause</span> Blast radius was computed from the diff <em>after</em> the worker's commit, so the diff was always empty.</p>
+<p><span class="lbl">Fix</span> Capture the base SHA before committing and classify against it. Caught by <code>tests/smoke.py</code> — the smoke test earned its keep on day one.</p>
+<p><span class="lbl">Lesson</span> A security control that fails silently is worse than none. Test gates against a change that must trip them.</p>
+</div>
+
+<div class="incident">
+<h4>S3 · Secret scanner flagged the whole checkout <span class="tag sec">sandbox</span></h4>
+<p><span class="lbl">Symptom</span> Runs blocked on "secrets" that were already in the repo (test fixtures, docs).</p>
+<p><span class="lbl">Fix</span> Scan only the lines a change <em>adds</em>, not the whole tree.</p>
+</div>
+
+<div class="incident">
+<h4>S4 · The factory ran with your whole GitHub account <span class="tag sec">sandbox</span></h4>
+<p><span class="lbl">Symptom</span> Pushes used the ambient <code>gh</code> credential — full account scope for a bot that only needs to push <code>agent/*</code> branches and open PRs on one repo.</p>
+<p><span class="lbl">Fix</span> Fine-grained scoped credential (PR #4), proven with live permission/scope probes before trusting it. Worker uses it, not your login.</p>
+</div>
+
+<div class="incident">
+<h4>S5 · A "tests" PR passed CI with zero tests — and shipped Windows system binaries <span class="tag sec">sandbox</span></h4>
+<p><span class="lbl">Symptom</span> PR #37 (ticket 13) merged-clean on all checks. Diff: one scratch file and six Windows system-cache binaries — the agent had written to a literal <code>%SystemDrive%\...</code> path inside the worktree and committed whatever landed.</p>
+<p><span class="lbl">Root cause</span> Gates checked "tests pass" and "no secrets" — nothing checked that a <em>test ticket produced tests</em>, or that the diff was text.</p>
+<p><span class="lbl">Fix</span> Junk gate in the worker: reject any diff containing binary files; reject a test-ticket whose diff touches no file under <code>tests/</code>. Both fail the <em>attempt</em>, so the ticket retries instead of dying.</p>
+<p><span class="lbl">Lesson</span> Green CI ≠ correct change. Gates must assert the ticket's <em>intent</em>, not just hygiene.</p>
+</div>
+
+<h3>Pipeline correctness</h3>
+
+<div class="incident">
+<h4>P1 · Failed pushes reported success <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Tickets went <code>pr_open</code> with no clickable PR — one even with no PR at all.</p>
+<p><span class="lbl">Fix</span> Verify push and PR-creation results explicitly; a ticket is not <code>pr_open</code> until a human can click a link.</p>
+</div>
+
+<div class="incident">
+<h4>P2 · Everything worked — on my machine <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> First Linux CI run caught three bugs the Windows dev loop never saw (path handling, encodings).</p>
+<p><span class="lbl">Fix</span> CI matrix runs the suite on Linux <b>and</b> Windows on every PR, forever after.</p>
+</div>
+
+<div class="incident">
+<h4>P3 · <code>git commit</code> refused our own pathspec <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> <code>commit_all</code> died: git rejects exclude pathspecs (<code":!ignored") for ignored directories.</p>
+<p><span class="lbl">Fix</span> Stage explicitly instead of exclude-pathspecs; regression test added.</p>
+</div>
+
+<div class="incident">
+<h4>P4 · One stale worktree poisoned every later run <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> After one crashed run, every subsequent run failed on the same leftover branch/worktree.</p>
+<p><span class="lbl">Fix</span> Worker prunes stale worktrees and clears its own old branches before starting (agent-only branch guard — it may never touch human branches).</p>
+</div>
+
+<div class="incident">
+<h4>P5 · A batch ran the <em>old</em> runner <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Fixes were merged and pushed, but the next batch behaved like pre-fix code.</p>
+<p><span class="lbl">Root cause</span> The batch executed the working tree, and local <code>main</code> lagged <code>origin/main</code>.</p>
+<p><span class="lbl">Fix</span> Every batch pins <code>origin/main</code> and greps the runner for a known marker before launching — refuse to run code you can't prove is current.</p>
+</div>
+
+<div class="incident">
+<h4>P6 · Runs died at the same step number, every time <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Hard stop at a fixed step regardless of task size.</p>
+<p><span class="lbl">Root cause</span> The token governor capped <em>cumulative</em> tokens across the whole loop instead of the <em>context window</em> — but every step resends the whole conversation, so the real wall is per-request context.</p>
+<p><span class="lbl">Fix</span> Governor measures the next request's projected context, not the sum of all usage.</p>
+<p><span class="lbl">Lesson</span> With chat-loop LLMs, "tokens used" and "tokens in context" are different quantities. Budget the second one.</p>
+</div>
+
+<div class="incident">
+<h4>P7 · The agent could declare victory with an empty diff <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Runs ended <code>completed</code> with a confident summary and zero changed files.</p>
+<p><span class="lbl">Fix</span> Judge runs by the diff and the gates, not by <code>finish()</code> (PR #10). A summary is a claim; the diff is the fact.</p>
+</div>
+
+<div class="incident">
+<h4>P8 · Tier router used facts that didn't exist yet <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Escalation decisions referenced attempt history/blast data only available <em>after</em> routing.</p>
+<p><span class="lbl">Fix</span> Route only on inputs that exist at routing time (PR #7); escalation happens between attempts, not inside one.</p>
+</div>
+
+<div class="incident">
+<h4>P9–P11 · The factory fixed its own bugs <span class="tag pipe">pipeline</span></h4>
+<p>Tickets 9 and 10 were real factory bugs filed as tickets, and the agent shipped the fixes: daily budget reset at UTC instead of <b>local</b> midnight (PR #17), and retries dying pushing to a stale remote branch (PR #18, with a test that proves retry clears the stale branch against a real bare git origin). Also: <code>sync</code> now reopens a ticket when its PR is reopened (PR #15), and transient git failures outside the pipeline are retried instead of escalated.</p>
+</div>
+
+<h3>Agent behavior</h3>
+
+<div class="incident">
+<h4>A1 · Six tickets, six attempts each, <b>zero</b> write calls <span class="tag agent">agent</span></h4>
+<p><span class="lbl">Symptom</span> All "write tests for X" tickets died at ~24 steps having only read and searched. Transcripts showed perfect analysis, no edits.</p>
+<p><span class="lbl">Root cause</span> Tool design: the only write tools were <code>write_file</code> (rewrite the entire 1,300-line test file — too big to emit) and <code>edit_file</code> (needs a perfect anchor). No append. The model chose endless exploration over an impossible write.</p>
+<p><span class="lbl">Fix</span> Added <code>append_file</code> + a system-prompt rule: "To add a test class to a large existing file, use append_file; never rewrite a large file, and never keep exploring instead of editing." The same tickets then shipped on the first attempt.</p>
+<p><span class="lbl">Lesson</span> What looks like model failure is often tool-design failure. Check what the agent was <em>able</em> to do before blaming what it "chose" to do.</p>
+</div>
+
+<div class="incident">
+<h4>A2 · The board looked empty (404) <span class="tag agent">agent</span></h4>
+<p><span class="lbl">Symptom</span> Board URL returned 404 to an anonymous fetch; suspected empty project.</p>
+<p><span class="lbl">Root cause</span> Personal GitHub Projects are private by default — 404 to logged-out fetchers. The repo was public; the board had 15 items all along. Not a bug: an auth wall wearing a 404 costume.</p>
+</div>
+
+<h3>Ticket specs — the real ceiling</h3>
+
+<div class="incident">
+<h4>T1 · Eight failed attempts, and the bug was in the ticket <span class="tag spec">spec</span></h4>
+<p><span class="lbl">Symptom</span> Ticket 13 ("tests for local-midnight spend_today") failed 8 attempts / $1.37 while other tickets shipped for pennies.</p>
+<p><span class="lbl">Root cause</span> The ticket body told the agent to fake <code>time.localtime</code>/<code>struct_time</code>/<code>gmtoff</code> — while the function under test takes an <b>injectable epoch float</b>. The spec pushed the model into the one corner where a 4B-class model can't dance.</p>
+<p><span class="lbl">Fix</span> Closed 13; split into tickets 16/17 with explicit class names, the seam named ("pass <code>now=</code>; do NOT patch time"), and "use append_file". Both shipped first try, $0.06 and $0.09.</p>
+<p><span class="lbl">Lesson</span> Ticket quality dominates model quality. Name the seam, forbid the trap, size the ticket to the tier.</p>
+</div>
+
+<div class="incident">
+<h4>T2 · A ticket with no passing solution <span class="tag spec">spec</span></h4>
+<p><span class="lbl">Symptom</span> Ticket 19 failed 3 attempts even after the A1/T1 fixes.</p>
+<p><span class="lbl">Root cause</span> My ticket body asserted an upper bound on a <code>started_at &gt;=</code> sum — mathematically impossible — and the test was redundant with ticket 18's boundary test anyway. The agent thrashed against an unsatisfiable spec.</p>
+<p><span class="lbl">Fix</span> Closed as spec bug with the reason recorded. Rule added to the skill: <b>hand-solve a ticket on one line before queueing it</b>; if the spec has no passing solution, no tier can find one.</p>
+</div>
+
+<h2>Shipped ledger</h2>
+<p>Every ticket, its cost (API-equivalent; compute was already paid for) and where it landed. <span class="num">Attempts shown where &gt; 1.</span></p>
+<table>
+<tr><th>#</th><th>Ticket</th><th>Outcome</th><th>Cost</th><th>PR</th></tr>
+<tr><td>1</td><td>Tests for notify webhook failure handling <span class="num">(first agent PR)</span></td><td class="ok">merged</td><td>$0.11</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/1">#1</a></td></tr>
+<tr><td>2</td><td><code>factory show &lt;id&gt;</code></td><td class="ok">merged</td><td>$0.79 <span class="num">(×5)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/8">#8</a></td></tr>
+<tr><td>3</td><td><code>factory runs</code> with tier/reason</td><td class="ok">merged</td><td>$0.32 <span class="num">(×3)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/11">#11</a></td></tr>
+<tr><td>4</td><td><code>factory retry &lt;id&gt;</code></td><td class="ok">merged</td><td>$0.35 <span class="num">(×3)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/12">#12</a></td></tr>
+<tr><td>5</td><td><code>factory tier</code> command</td><td class="ok">merged</td><td>$0.13</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/13">#13</a></td></tr>
+<tr><td>6</td><td>Bulk <code>add --from-file</code></td><td class="ok">merged</td><td>$1.01 <span class="num">(×4)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/16">#16</a></td></tr>
+<tr><td>7</td><td>Tier mix in <code>factory status</code></td><td class="ok">merged</td><td>$0.12</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/14">#14</a></td></tr>
+<tr><td>8</td><td>sync: reopened PR reopens ticket</td><td class="ok">merged</td><td>$0.15</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/15">#15</a></td></tr>
+<tr><td>9</td><td><b>Factory bug:</b> budget reset UTC → local midnight</td><td class="ok">merged</td><td>$0.59 <span class="num">(×3)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/17">#17</a></td></tr>
+<tr><td>10</td><td><b>Factory bug:</b> retry died on stale remote branch</td><td class="ok">merged</td><td>$0.44</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/18">#18</a></td></tr>
+<tr><td>11</td><td>README CLI docs</td><td class="ok">merged</td><td>$0.41</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/19">#19</a></td></tr>
+<tr><td>12</td><td>Tests for parse_tickets + --from-file <span class="num">(superseded by 16/17)</span></td><td class="warn">closed</td><td>$0.81 <span class="num">(×4)</span></td><td>—</td></tr>
+<tr><td>13</td><td>Tests for spend_today <span class="num">(bad spec → split into 18/19; see T1)</span></td><td class="warn">closed</td><td>$1.37 <span class="num">(×8)</span></td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/37">#37</a> <span class="bad">junk, closed</span></td></tr>
+<tr><td>14</td><td>Tests: retry clears stale agent branch <span class="num">(real bare origin)</span></td><td class="ok">merged</td><td>$0.16</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/38">#38</a></td></tr>
+<tr><td>15</td><td>README: --from-file in Commands table</td><td class="ok">merged</td><td>$0.01</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/39">#39</a></td></tr>
+<tr><td>16</td><td>Unit tests for parse_tickets JSONL</td><td class="ok">merged</td><td>$0.06</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/40">#40</a></td></tr>
+<tr><td>17</td><td>E2E test for <code>add --from-file</code></td><td class="ok">merged</td><td>$0.09</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/41">#41</a></td></tr>
+<tr><td>18</td><td>Test spend_today sums since local midnight</td><td class="ok">merged</td><td>$0.06</td><td><a href="https://github.com/yongsheng-bit/agentic-factory/pull/44">#44</a></td></tr>
+<tr><td>19</td><td>Test spend_today boundary <span class="num">(impossible assertion → closed; see T2)</span></td><td class="warn">closed</td><td>$0.41 <span class="num">(×3)</span></td><td>—</td></tr>
+</table>
+
+<div class="callout">
+<b>Cost curve.</b> Early feature tickets: $0.31–$1.01. After the append_file fix and better ticket specs, test tickets shipped at <b>$0.01–$0.09 — roughly 10× cheaper</b>. The single most expensive ticket ($1.37) was the one with the broken spec: bad tickets, not bad models, are where money burns.
+</div>
+
+<h2>Distilled lessons</h2>
+<ol>
+  <li><b>Judge artifacts, not self-reports.</b> The diff and the gates decide; <code>finish()</code> is marketing.</li>
+  <li><b>Test the gates against adversarial examples.</b> PR #37 (zero tests, binary junk, green CI) is the template: every gate needs a change that must trip it.</li>
+  <li><b>Context window ≠ cumulative tokens.</b> Budget the per-request context in a chat loop.</li>
+  <li><b>Tool design shapes behavior.</b> No append tool → endless exploration. Fix the tool before blaming the model.</li>
+  <li><b>The ticket body is part of the system.</b> Hand-solve before queueing; name the seam; forbid the trap; size to the tier.</li>
+  <li><b>Dual-OS CI from day one.</b> Windows-only dev loops ship Linux-broken code.</li>
+  <li><b>Status changes require a clickable truth.</b> No <code>pr_open</code> without a URL a human can open.</li>
+  <li><b>Pin what you execute.</b> A batch must prove it runs current code (<code>origin/main</code> + marker grep).</li>
+  <li><b>Fail the attempt, not the ticket.</b> Junk/binary diffs retry; only spec bugs close.</li>
+</ol>
+
+<h2>Current state &amp; parked work</h2>
+<p><b>Idle, clean board (19/19 Done), 145+ tests green on Linux + Windows, everything pushed.</b> Deliberately parked:</p>
+<ul>
+  <li><b>Second reviewer account</b> — merges are currently admin-bypass (one GitHub account). A second account gives the human gate real teeth. <span class="num">David: "later".</span></li>
+  <li><b>Real strong tier</b> — both tiers currently hit the same Qwen engine; pointing <code>strong</code> at the DeepSeek engine on yys4000 is config + one engine-management decision (one engine at a time on those 3090s).</li>
+  <li><b>Cron</b> — scheduled <code>factory run</code> + board sync so the queue drains itself.</li>
+</ul>
+
+<footer>
+Built by David + Hermes. Regenerate stats from: <code>factory.db</code> (tickets/runs) · <code>gh pr list --state all</code> · <code>git log</code>. Per-step agent transcripts: <code>%LOCALAPPDATA%\Temp\agentic-factory-prompts\</code>. This file: <code>docs/BUILDLOG.html</code> — update it with every batch.
+</footer>
+
+</main>
+</body>
+</html>
