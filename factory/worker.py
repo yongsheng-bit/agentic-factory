@@ -16,10 +16,10 @@ from . import db as dbmod
 from . import gates, notify, worktree as wt
 
 
-def _escalate(con, ticket, why):
-    dbmod.finish(con, ticket["id"], "escalated")
-    notify.notify(f"ESCALATED: {ticket['ref'] or ticket['id']}",
-                  f"{ticket['title']}\nreason: {why}")
+def _escalate(con, ticket, cfg, why):
+    dbmod.finish(con, ticket["id"], "escalated", error=why)
+    dbmod.add_escalation(con, ticket["id"], why)
+    notify.post(cfg, "ESCALATION", f"ticket {ticket['id']}: {why}")
     return "escalated"
 
 
@@ -32,9 +32,9 @@ def process_once(cfg, con, dry=False):
     spent_today = dbmod.spend_today(con)
     if spent_today >= daily:
         dbmod.set_paused(con, True)
-        notify.notify("DAILY BUDGET EXHAUSTED",
-                      f"${spent_today:.2f} >= ${daily:.2f}. Queue paused; run "
-                      f"`python -m factory.cli resume` to continue.")
+        notify.post(cfg, "DAILY BUDGET EXHAUSTED",
+                    f"${spent_today:.2f} >= ${daily:.2f}. Queue paused; run "
+                    f"`python -m factory.cli resume` to continue.")
         return "budget"
 
     ticket = dbmod.claim_next(con)
@@ -43,8 +43,8 @@ def process_once(cfg, con, dry=False):
 
     if dbmod.ticket_spend(con, ticket["id"]) >= float(ticket["budget_usd"]):
         dbmod.finish(con, ticket["id"], "rejected")
-        notify.notify(f"BUDGET: {ticket['ref'] or ticket['id']}",
-                      f"ticket budget ${ticket['budget_usd']:.2f} exhausted")
+        notify.post(cfg, "BUDGET",
+                    f"ticket {ticket['id']} budget ${ticket['budget_usd']:.2f} exhausted")
         return "rejected"
 
     repo = cfg["repo"]
@@ -58,7 +58,7 @@ def process_once(cfg, con, dry=False):
         path, branch = wt.create(repo, ticket["id"], ticket["ref"],
                                  base=cfg.get("base_branch", "HEAD"))
     except Exception as exc:
-        return _escalate(con, ticket, f"worktree create failed: {exc}")
+        return _escalate(con, ticket, cfg, f"worktree create failed: {exc}")
 
     try:
         prev = dbmod.last_failure(con, ticket["id"])
@@ -81,7 +81,7 @@ def process_once(cfg, con, dry=False):
         if res["status"] != "ok":
             dbmod.bump_attempt(con, ticket["id"])
             if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
-                return _escalate(con, ticket,
+                return _escalate(con, ticket, cfg,
                                  f"{res['status']} after {ticket['max_retries']} retries: "
                                  f"{(res.get('stderr') or '')[:300]}")
             dbmod.finish(con, ticket["id"], "queued")
@@ -92,7 +92,7 @@ def process_once(cfg, con, dry=False):
         if not wt.commit_all(path, f"{ticket['ref'] or 'ticket ' + str(ticket['id'])}: {ticket['title']}"):
             dbmod.bump_attempt(con, ticket["id"])
             if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
-                return _escalate(con, ticket, "agent produced no changes")
+                return _escalate(con, ticket, cfg, "agent produced no changes")
             dbmod.finish(con, ticket["id"], "queued")
             return "retry (empty diff)"
         keep_branch = True
@@ -109,7 +109,7 @@ def process_once(cfg, con, dry=False):
         if junk:
             dbmod.bump_attempt(con, ticket["id"])
             if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
-                return _escalate(con, ticket, junk)
+                return _escalate(con, ticket, cfg, junk)
             dbmod.finish(con, ticket["id"], "queued")
             return f"retry ({junk})"
 
@@ -118,7 +118,7 @@ def process_once(cfg, con, dry=False):
             f = gate["secrets"][0]
 
             keep_branch = False
-            return _escalate(con, ticket,
+            return _escalate(con, ticket, cfg,
                              f"SECRET FOUND {f.get('file')}:{f.get('line')} "
                              f"({f.get('reason')}) - PR blocked")
 
@@ -126,7 +126,7 @@ def process_once(cfg, con, dry=False):
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
         if nfiles == 0 or not diff_text.strip():
 
-            return _escalate(con, ticket,
+            return _escalate(con, ticket, cfg,
                              "cannot classify diff (git returned no changes after commit)")
         level, reason = blastmod.classify(
             wt.changed_files(path, base=base_sha),
@@ -140,6 +140,8 @@ def process_once(cfg, con, dry=False):
                 f"tier: {tier}  attempt: {attempt}  "
                 f"cost: ${dbmod.ticket_spend(con, ticket['id']):.4f}\n"
                 f"gate: {'; '.join(gate['tools'])} clean\n")
+        if ticket["issue_number"]:
+            body += f"\nCloses #{ticket['issue_number']}\n"
 
         pr_url = None
         if cfg.get("push", True):
@@ -152,20 +154,20 @@ def process_once(cfg, con, dry=False):
                                     token=cfg.get("gh_token"))
             except Exception as exc:
 
-                return _escalate(con, ticket, f"push/PR failed: {exc}")
+                return _escalate(con, ticket, cfg, f"push/PR failed: {exc}")
             dbmod.set_pr(con, ticket["id"], pr_url)
 
         if level == "high":
             dbmod.finish(con, ticket["id"], "needs_review")
-            notify.notify(f"HUMAN GATE: {ticket['ref'] or ticket['id']}",
-                          f"high blast radius ({reason}). Review {pr_url or branch}")
+            notify.post(cfg, f"HUMAN GATE: {ticket['ref'] or ticket['id']}",
+                        f"high blast radius ({reason}). Review {pr_url or branch}")
             return "needs_review"
 
         dbmod.finish(con, ticket["id"], "pr_open")
         return f"pr_open {pr_url or '(push disabled - branch ' + branch + ' is local only)'}"
 
     except Exception as exc:
-        return _escalate(con, ticket, f"worker error: {exc}")
+        return _escalate(con, ticket, cfg, f"worker error: {exc}")
     finally:
         if path and not cfg.get("keep_worktrees", False):
             try:
@@ -200,7 +202,7 @@ def watchdog(cfg, con, max_age_s=3600, kill=False):
     """
     n = dbmod.mark_stale_running_failed(con, older_than=max_age_s)
     if n:
-        notify.notify("WATCHDOG", f"reaped {n} stale run(s); tickets escalated")
+        notify.post(cfg, "WATCHDOG", f"reaped {n} stale run(s); tickets escalated")
     if kill:
         for pid, ref in dbmod.running_pids(con):
             if not _alive(pid):

@@ -12,13 +12,19 @@ import os
 import urllib.request
 
 
-def notify(title, text, webhook=None, dry=False):
+def payload_for(text, fmt="slack"):
+    if (fmt or "slack").lower() == "discord":
+        return {"content": text}
+    return {"text": text}
+
+
+def notify(title, text, webhook=None, dry=False, fmt="slack"):
     line = f"\n=== {title} ===\n{text}\n"
     print(line, flush=True)
     url = webhook or os.environ.get("FACTORY_WEBHOOK")
     if not url or dry:
         return False
-    payload = {"text": f"{title}\n{text}"}
+    payload = payload_for(f"{title}\n{text}", fmt)
     try:
         req = urllib.request.Request(
             url, data=json.dumps(payload).encode(),
@@ -28,3 +34,10 @@ def notify(title, text, webhook=None, dry=False):
     except Exception as exc:
         print(f"[notify] webhook failed: {exc}", flush=True)
         return False
+
+
+def post(cfg, title, text, dry=False):
+    """notify() with the webhook and dialect taken from config."""
+    cfg = cfg or {}
+    return notify(title, text, webhook=cfg.get("webhook_url"),
+                  dry=dry, fmt=cfg.get("webhook_format", "slack"))

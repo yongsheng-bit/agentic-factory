@@ -23,9 +23,27 @@ PROMPT_FILE_TOKEN = "{prompt_file}"
 PROMPT_TOKEN = "{prompt}"
 
 
+def expand_env(cfg):
+    """Replace "env:NAME" strings with the value of environment variable NAME.
+
+    Secrets (GitHub tokens, webhook URLs) live in the environment, not in
+    factory.json, so the config file can be committed and pasted into a
+    ticket without carrying credentials. A missing variable expands to the
+    empty string: the tool that needs it then fails loudly and locally,
+    which beats a literal "env:FACTORY_GH_TOKEN" being sent as a password.
+    """
+    if isinstance(cfg, dict):
+        return {k: expand_env(v) for k, v in cfg.items()}
+    if isinstance(cfg, list):
+        return [expand_env(v) for v in cfg]
+    if isinstance(cfg, str) and cfg.startswith("env:"):
+        return os.environ.get(cfg[4:], "")
+    return cfg
+
+
 def load_config(path):
     with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+        return expand_env(json.load(fh))
 
 
 TIERS = ("cheap", "strong")

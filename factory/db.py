@@ -96,12 +96,13 @@ def init(con: sqlite3.Connection) -> None:
 
 
 def add_ticket(con, title, body="", source="manual", ref=None,
-               budget_usd=2.00, max_retries=3, tier=None):
+               budget_usd=2.00, max_retries=3, tier=None, issue_number=None):
     now = time.time()
     cur = con.execute(
         "INSERT INTO tickets (source, ref, title, body, budget_usd, max_retries,"
-        " tier, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (source, ref, title, body, float(budget_usd), int(max_retries), tier, now, now),
+        " tier, issue_number, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (source, ref, title, body, float(budget_usd), int(max_retries), tier,
+         issue_number, now, now),
     )
     return int(cur.lastrowid)
 

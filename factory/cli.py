@@ -12,7 +12,8 @@ from . import agent as agentmod
 from . import blast as blastmod
 from . import board as boardmod
 from . import db as dbmod
-from . import gates, sync as syncmod, worker, worktree as wt
+from . import gates, issues as issuesmod, sync as syncmod, tick as tickmod
+from . import worker, worktree as wt
 
 
 def _open(args):
@@ -247,6 +248,39 @@ def cmd_board(args):
         print(f"ticket {tid}: {status} -> {column}" + (" (dry)" if args.dry else ""))
 
 
+def cmd_tick(args):
+    cfg, con = _open(args)
+    s = tickmod.tick(cfg, con, gh_path=args.gh, max_tickets=args.max,
+                     board=not args.no_board)
+    if args.json:
+        print(json.dumps(s))
+        return
+    if s["busy"]:
+        print("busy: another worker holds a run, nothing done")
+        return
+    print(f"reaped={s['reaped']} sync={s['sync_changes']} change(s)"
+          f"/{s['sync_errors']} error(s) outcomes={s['outcomes'] or '-'} "
+          f"spend_today=${s['spend_today']:.2f}")
+    if s["board_error"]:
+        print(f"board: {s['board_error']}")
+
+
+def cmd_import_issues(args):
+    cfg, con = _open(args)
+    try:
+        slug, imported, skipped = issuesmod.import_issues(
+            cfg, con, gh_path=args.gh, label=args.label)
+    except issuesmod.IssueError as exc:
+        print(f"import-issues: {exc}")
+        sys.exit(1)
+    for n, tid in imported:
+        print(f"issue #{n} -> ticket {tid}")
+    for n, tid in skipped:
+        print(f"issue #{n}: already ticket {tid}")
+    if not imported and not skipped:
+        print(f"no open issues labelled '{args.label}' in {slug}")
+
+
 def cmd_gate(args):
     cfg, _ = _open(args)
     root = args.path or cfg["repo"]
@@ -343,6 +377,17 @@ def build_parser():
 
     s = a.add_parser("watchdog"); s.add_argument("--older-than", type=int, default=3600)
     s.add_argument("--kill", action="store_true"); s.set_defaults(fn=cmd_watchdog)
+
+    s = a.add_parser("tick", help="unattended cycle: reap, sync, drain, alert")
+    s.add_argument("--max", type=int, default=2, help="max tickets per tick")
+    s.add_argument("--no-board", action="store_true")
+    s.add_argument("--json", action="store_true", help="machine-readable summary")
+    s.add_argument("--gh"); s.set_defaults(fn=cmd_tick)
+
+    s = a.add_parser("import-issues",
+                     help="queue open GitHub issues carrying a label")
+    s.add_argument("--label", default="factory")
+    s.add_argument("--gh"); s.set_defaults(fn=cmd_import_issues)
 
     s = a.add_parser("sync")
     s.add_argument("--gh", help="path to the gh CLI; default is config gh_path, "

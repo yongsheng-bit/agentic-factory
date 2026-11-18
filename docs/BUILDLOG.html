@@ -72,15 +72,15 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 11:54 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 12:14 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>19</b><span>tickets</span></div>
   <div class="stat"><b class="ok">16</b><span>merged</span></div>
   <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
   <div class="stat"><b>61</b><span>agent runs</span></div>
-  <div class="stat"><b>42</b><span>commits</span></div>
-  <div class="stat"><b>145+</b><span>tests green</span></div>
+  <div class="stat"><b>44</b><span>commits</span></div>
+  <div class="stat"><b>146</b><span>tests green</span></div>
   <div class="stat"><b>$7.38</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
@@ -113,6 +113,7 @@
 <tr><td><b>Nov 16</b></td><td>Bootstrap: queue, worktree isolation, gates, kill switch; wired to the local 3090 endpoint (Qwen, ~100 tok/s); sandbox leaks closed same day; first Linux CI run caught three Windows-only bugs → dual-OS CI from then on; CODEOWNERS protects control-plane paths.</td></tr>
 <tr><td><b>Nov 17</b></td><td>The factory builds itself: tickets 1–11 shipped by the agent (PRs #1–#19) — <code>show</code>/<code>runs</code>/<code>retry</code>/<code>tier</code>/<code>status</code>, bulk <code>add --from-file</code>, <code>sync</code> (PR verdict → queue), scoped factory token, Projects board. Two of those tickets were bugs <em>in the factory itself</em> (#17 budget timezone, #18 stale-branch retry).</td></tr>
 <tr><td><b>Nov 18</b></td><td>Hardening day: <code>append_file</code> tool ends the test-writing thrash; junk-PR gate after PR #37; the last blocked tickets turn out to be <em>bad ticket specs</em>, get split, and ship first try. Board closes at <b>19/19 Done, zero blocked</b>.</td></tr>
+<tr><td><b>Nov 18 · Phase 2</b></td><td>Unattended operation: <code>factory tick</code> (reap → sync → board → build ≤2 → alert) on Windows Task Scheduler every 15 min; Discord/Slack webhook alerts, silent when quiet; <code>factory import-issues</code> — a GitHub issue labelled <code>factory</code> from any device becomes a queued ticket, PR closes it via <code>Closes #N</code>; secrets leave <code>factory.json</code> (<code>env:</code> expansion, gh-login is the one credential); <code>scripts/enable_review_gate.sh</code> staged for the second account. 19 new tests, 146 green.</td></tr>
 </table>
 
 <h2 id="incidents">Incident log — what broke and what it taught us</h2>
@@ -214,6 +215,14 @@
 <p>Tickets 9 and 10 were real factory bugs filed as tickets, and the agent shipped the fixes: daily budget reset at UTC instead of <b>local</b> midnight (PR #17), and retries dying pushing to a stale remote branch (PR #18, with a test that proves retry clears the stale branch against a real bare git origin). Also: <code>sync</code> now reopens a ticket when its PR is reopened (PR #15), and transient git failures outside the pipeline are retried instead of escalated.</p>
 </div>
 
+<div class="incident">
+<h4>P12 · The pasted PAT died mid-build <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Phase 2's first live tick: every GitHub call 401'd. The <code>ghp_</code> token in <code>factory.json</code> had been revoked server-side — pasted tokens age out and die silently until the next unattended run discovers it at 3 a.m.</p>
+<p><span class="lbl">Root cause</span> Two sources of GitHub identity: the gh CLI keyring login (alive, refreshing) and a hand-copied PAT in config (dead). The factory trusted the dead one.</p>
+<p><span class="lbl">Fix</span> One credential: the scheduler wrapper resolves <code>gh auth token</code> at runtime; <code>factory.json</code> carries <code>env:FACTORY_GH_TOKEN</code>, never a secret. A missing variable expands to empty string so gh falls back to its keyring login and failures stay loud.</p>
+<p><span class="lbl">Lesson</span> Unattended systems must authenticate through the one identity that can renew itself. A pasted secret is a scheduled outage.</p>
+</div>
+
 <h3>Agent behavior</h3>
 
 <div class="incident">
@@ -290,11 +299,15 @@
 </ol>
 
 <h2>Current state &amp; parked work</h2>
-<p><b>Idle, clean board (19/19 Done), 145+ tests green on Linux + Windows, everything pushed.</b> Deliberately parked:</p>
+<p><b>Unattended since Nov 18: Task Scheduler runs <code>factory tick</code> every 15 minutes</b> (reap stale runs → sync PR verdicts → board → build ≤2 tickets → alert). 146 tests green on Linux + Windows, everything pushed.</p>
 <ul>
-  <li><b>Second reviewer account</b> — merges are currently admin-bypass (one GitHub account). A second account gives the human gate real teeth. <span class="num">David: "later".</span></li>
-  <li><b>Real strong tier</b> — both tiers currently hit the same Qwen engine; pointing <code>strong</code> at the DeepSeek engine on yys4000 is config + one engine-management decision (one engine at a time on those 3090s).</li>
-  <li><b>Cron</b> — scheduled <code>factory run</code> + board sync so the queue drains itself.</li>
+  <li><b>File tickets from anywhere</b> — <code>factory import-issues</code>: open a GitHub issue with the <code>factory</code> label (add <code>tier:strong</code> to route it), next tick queues it, the shipped PR closes it. Runs inside every tick.</li>
+  <li><b>Alerts</b> — escalations, budget stops, merged verdicts and ready PRs post to <code>FACTORY_WEBHOOK</code> (Discord dialect). <span class="num">David: create a channel webhook and <code>setx FACTORY_WEBHOOK &lt;url&gt;</code> to turn it on; silent until then.</span></li>
+</ul>
+<p>Deliberately parked:</p>
+<ul>
+  <li><b>Second reviewer account</b> — merges are currently admin-bypass (one GitHub account). A second account gives the human gate real teeth; <code>scripts/enable_review_gate.sh</code> is ready to run the day it exists. <span class="num">David: "later".</span></li>
+  <li><b>Real strong tier</b> — both tiers hit the same Qwen engine by decision: the 3090s run <em>one engine at a time</em>, and swapping to DeepSeek per ticket would take the cheap tier (and this chat) offline. Escalation to <code>strong</code> still works — it just routes to the same model until a second box exists.</li>
 </ul>
 
 <footer>
