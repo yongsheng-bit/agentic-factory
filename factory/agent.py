@@ -230,14 +230,23 @@ def minimal_env(base=None, allow_extra=(), spec_env=None, env_extra=None):
 
     `spec_env` and `env_extra` are applied unconditionally afterwards: those are
     the factory deliberately configuring this run, not the ambient environment.
+    A `{PATH}` placeholder inside an override value expands to the base PATH,
+    so a config can prepend a toolchain directory without restating the whole
+    search path (which would silently freeze it against the operator's shell).
     """
     base = os.environ if base is None else base
     allow = {n.upper() for n in ENV_ALLOWLIST}
     allow |= {n.upper() for n in allow_extra}
     env = {name: value for name, value in base.items() if name.upper() in allow}
+    base_path = ""
+    for name, value in base.items():
+        if name.upper() == "PATH":
+            base_path = value
+            break
     for src in (spec_env, env_extra):
         if src:
-            env.update(src)
+            for name, value in src.items():
+                env[name] = str(value).replace("{PATH}", base_path)
     return env
 
 
@@ -247,7 +256,11 @@ def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=
     if timeout_s is None:
         timeout_s = int(spec.get("timeout_s", 1800))
     argv = build_argv(spec, prompt, prompt_path or "")
-    allow_extra = ((cfg or {}).get("agent", {}) or {}).get("env_allowlist", [])
+    agent_cfg = (cfg or {}).get("agent", {}) or {}
+    allow_extra = agent_cfg.get("env_allowlist", [])
+    cfg_env = agent_cfg.get("env") or {}
+    if cfg_env:
+        env_extra = {**(env_extra or {}), **cfg_env}
     env = minimal_env(allow_extra=allow_extra, spec_env=spec.get("env", {}) or {},
                       env_extra=env_extra)
 

@@ -1224,6 +1224,29 @@ class TestAgentEnv(unittest.TestCase):
         env = agentmod.minimal_env(base=self.BASE, allow_extra=["FACTORY_WEBHOOK"])
         self.assertEqual(env["FACTORY_WEBHOOK"], "https://hooks.example/leak")
 
+    def test_path_placeholder_expands_to_base_path(self):
+        env = agentmod.minimal_env(base=self.BASE,
+                                   env_extra={"PATH": "/opt/tools/bin:{PATH}"})
+        self.assertEqual(env["PATH"], "/opt/tools/bin:/usr/bin")
+
+    def test_config_env_reaches_the_agent_run(self):
+        spec = {"command": [sys.executable, "-c",
+                            "import os; print(os.environ.get('PETRO_ENV_MARK', ''))"],
+                "timeout_s": 60}
+        cfg = {"agent": {"env": {"PETRO_ENV_MARK": "venv-pinned"}}}
+        res = agentmod.run(cfg, spec, "t", os.getcwd(),
+                           prompt_path=os.devnull, timeout_s=60)
+        self.assertEqual(res["stdout"].strip(), "venv-pinned")
+
+    def test_config_env_can_prepend_path_for_the_run(self):
+        spec = {"command": [sys.executable, "-c",
+                            "import os; print(os.environ['PATH'].startswith('MARKER'))"],
+                "timeout_s": 60}
+        cfg = {"agent": {"env": {"PATH": "MARKER:{PATH}"}}}
+        res = agentmod.run(cfg, spec, "t", os.getcwd(),
+                           prompt_path=os.devnull, timeout_s=60)
+        self.assertEqual(res["stdout"].strip(), "True")
+
     def test_run_does_not_inherit_the_real_environment(self):
         marker = "FACTORY_TEST_CANARY_" + uuid.uuid4().hex
         spec = {"command": [sys.executable, "-c",
