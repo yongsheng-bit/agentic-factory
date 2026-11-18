@@ -72,16 +72,16 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 15:55 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 17:09 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>19</b><span>tickets</span></div>
   <div class="stat"><b class="ok">16</b><span>merged</span></div>
   <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
-  <div class="stat"><b>61</b><span>agent runs</span></div>
-  <div class="stat"><b>51</b><span>commits</span></div>
-  <div class="stat"><b>152</b><span>tests green</span></div>
-  <div class="stat"><b>$7.38</b><span>shadow spend</span></div>
+  <div class="stat"><b>72</b><span>agent runs</span></div>
+  <div class="stat"><b>55</b><span>commits</span></div>
+  <div class="stat"><b>194</b><span>tests green</span></div>
+  <div class="stat"><b>$8.54</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
 
@@ -115,6 +115,7 @@
 <tr><td><b>Nov 18</b></td><td>Hardening day: <code>append_file</code> tool ends the test-writing thrash; junk-PR gate after PR #37; the last blocked tickets turn out to be <em>bad ticket specs</em>, get split, and ship first try. Board closes at <b>19/19 Done, zero blocked</b>.</td></tr>
 <tr><td><b>Nov 18 · Phase 2</b></td><td>Unattended operation: <code>factory tick</code> (reap → sync → board → build ≤2 → alert) on Windows Task Scheduler every 15 min; Discord/Slack webhook alerts, silent when quiet; <code>factory import-issues</code> — a GitHub issue labelled <code>factory</code> from any device becomes a queued ticket, PR closes it via <code>Closes #N</code>; secrets leave <code>factory.json</code> (<code>env:</code> expansion, gh-login is the one credential); <code>scripts/enable_review_gate.sh</code> staged for the second account. 19 new tests, 146 green.</td></tr>
 <tr><td><b>Nov 18 · Phase 3</b></td><td><b>First real customer: <a href="https://github.com/yongsheng-bit/petro-tools">petro-tools</a></b> — the gas-bar paperwork toolchain (receipt scan → CSV → Dips.xlsx → Shift_Report.xlsx → audit). Skeleton, CI and harness tests scaffolded by hand; the backlog — 14 tickets distilled from the three proven petro skills, each with synthetic-fixture acceptance criteria — filed as <code>factory</code>-labelled issues. Factory goes multi-repo: <code>factory-petro.json</code> (own DB, own budget, no board) and the scheduler wrapper now ticks every config in sequence on one engine.</td></tr>
+<tr><td><b>Nov 18 · pstack bridge</b></td><td>Adopted the verification principles from Cursor's <a href="https://github.com/cursor/plugins/tree/main/pstack">pstack</a> (MIT): the playbooks themselves target interactive frontier agents, but their rules fit the factory as a per-repo <code>AGENTS.md</code>. Filed <a href="https://github.com/yongsheng-bit/agentic-factory/issues/51">issue #51</a> — <code>write_prompt()</code> injects the repo's <code>AGENTS.md</code> into every ticket prompt (the factory's skill-loading bridge, to be built by the factory itself) — and pushed petro-tools' first <code>AGENTS.md</code>: prove-it-works, test-behavior, idempotent-ops, never-probe-the-environment. First petro tick then exposed three real bugs (P13, A3, P14) — see incident log.</td></tr>
 </table>
 
 <h2 id="incidents">Incident log — what broke and what it taught us</h2>
@@ -224,6 +225,22 @@
 <p><span class="lbl">Lesson</span> Unattended systems must authenticate through the one identity that can renew itself. A pasted secret is a scheduled outage.</p>
 </div>
 
+<div class="incident">
+<h4>P13 · The escalation path was dead code <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> First petro tickets exhausted their retries — and instead of escalating, the tick died with <code>TypeError: finish() got an unexpected keyword argument 'error'</code>, leaving tickets stuck in <code>running</code> forever. The scheduler log filled with tracebacks from inside the error handler.</p>
+<p><span class="lbl">Root cause</span> <code>_escalate()</code> called <code>finish(error=…)</code> (the parameter is <code>detail=</code>) and <code>db.add_escalation()</code>, which did not exist at all. Two consecutive crashes on the one path that runs only when everything else already failed. The unittest suite never exercised it — only the manual <code>smoke.py</code> script did, and nobody had run it since the db module was refactored.</p>
+<p><span class="lbl">Fix</span> <code>finish(detail=…)</code>; a real <code>escalations</code> table (ticket_id, why, created_at) so "what did it give up on, and why" is answerable from the DB; regression test that drives <code>_escalate</code> end to end and reads the row back.</p>
+<p><span class="lbl">Lesson</span> A failure path tested only by a manual script is an untested failure path — and the escalation branch is the one you absolutely cannot discover broken at 3 a.m., because it is the only thing standing between a confused agent and a silently dropped ticket.</p>
+</div>
+
+<div class="incident">
+<h4>P14 · The PATH override that did nothing <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> A config <code>agent.env</code> override prepending a dependency venv to <code>PATH</code> looked applied (first PATH entry in the child env was the venv) yet bare <code>python</code> still resolved to the system interpreter.</p>
+<p><span class="lbl">Root cause</span> Two stacked Windows traps. First, the base environment carries <b>both</b> <code>PATH</code> and <code>Path</code>; setting only one spelling leaves the twin to win the loader lookup. Second, <code>subprocess.run(["python", …])</code> resolves bare names against the <em>parent's</em> PATH, not the child env block — while the agent's own <code>run_command</code> resolves via <code>shutil.which(path=env["PATH"])</code>, i.e. exactly the overridden path. A probe using the former concluded "broken"; the real tool chain was fine.</p>
+<p><span class="lbl">Fix</span> <code>minimal_env</code> now deletes every case-twin of an overridden name before setting it, and expands a <code>{PATH}</code> placeholder so configs prepend without restating the search path. Probe with the same resolution the tool uses, not with a different one.</p>
+<p><span class="lbl">Lesson</span> On Windows, environment variables are case-insensitive but not case-<em>unique</em> — an override that doesn't remove the twin is an override that may never be read. And verify through the same code path production uses.</p>
+</div>
+
 <h3>Agent behavior</h3>
 
 <div class="incident">
@@ -238,6 +255,14 @@
 <h4>A2 · The board looked empty (404) <span class="tag agent">agent</span></h4>
 <p><span class="lbl">Symptom</span> Board URL returned 404 to an anonymous fetch; suspected empty project.</p>
 <p><span class="lbl">Root cause</span> Personal GitHub Projects are private by default — 404 to logged-out fetchers. The repo was public; the board had 15 items all along. Not a bug: an auth wall wearing a 404 costume.</p>
+</div>
+
+<div class="incident">
+<h4>A3 · The ticket promised a dependency the environment didn't have <span class="tag agent">agent</span></h4>
+<p><span class="lbl">Symptom</span> The first two petro tickets burned 6 attempts / $0.70 and produced <b>zero file writes</b>. Transcripts: steps 1–8 read the codebase (reasonable), then a slow spiral of <code>pip list</code>, <code>where python</code>, <code>python --version</code>, <code>py -3.12</code> — environment archaeology until the token budget died.</p>
+<p><span class="lbl">Root cause</span> The ticket body asserted "the environment already has openpyxl and PyMuPDF installed." It did not — the agent's <code>python</code> was the orchestrator's own interpreter, which had neither. The model correctly detected a contradiction between the spec and reality, and then, having no instruction for that state, investigated instead of writing. A small model trusts the environment over the prompt, then trusts the prompt over itself, and thrashes.</p>
+<p><span class="lbl">Fix</span> Three parts: a dedicated venv (<code>petro-tools-env</code>, created with <code>--copies</code> — the default venv on this host is a uv-style trampoline that loses its venv context when resolved via PATH) with the deps installed; a config-driven <code>agent.env</code> overlay with <code>{PATH}</code> expansion so each repo pins its own toolchain; and an <code>AGENTS.md</code> rule: "never install packages, hunt for interpreters, or probe the environment — if an import fails, that is a bug in your code path, go straight to editing."</p>
+<p><span class="lbl">Lesson</span> Before blaming the model for a failed ticket, verify the ticket's environment claims are true and count write calls in the transcript. An agent that explores instead of editing is reporting something: its ground floor is lying to it.</p>
 </div>
 
 <h3>Ticket specs — the real ceiling</h3>
