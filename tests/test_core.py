@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from factory import agent as agentmod
 from factory import blast as blastmod
+from factory import cli as climod
 from factory import db as dbmod
 from factory import gates
 from factory import sync as syncmod
@@ -1386,6 +1387,67 @@ class TestBoard(unittest.TestCase):
             board.close_issue(cfg, con, ticket)
             board.close_issue(cfg, con, con.execute("SELECT * FROM tickets").fetchone())
         self.assertEqual(calls, [("/repos/o/r/issues/42", "PATCH")])
+
+
+class TestParseTickets(unittest.TestCase):
+    """factory.cli.parse_tickets: rows plus the first bad line, if any."""
+
+    def test_valid_lines_become_rows(self):
+        rows, bad = climod.parse_tickets(
+            '{"title": "first"}\n{"title": "second", "body": "more"}\n')
+        self.assertIsNone(bad)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r["title"] for r in rows], ["first", "second"])
+        self.assertEqual(rows[0]["body"], "")
+
+    def test_blank_lines_are_skipped(self):
+        rows, bad = climod.parse_tickets(
+            '\n   \n{"title": "kept"}\n\n\t\n{"title": "also kept"}\n\n')
+        self.assertIsNone(bad)
+        self.assertEqual([r["title"] for r in rows], ["kept", "also kept"])
+
+    def test_line_without_title_names_the_line(self):
+        rows, bad = climod.parse_tickets('{"title": "ok"}\n{"body": "no title"}\n')
+        self.assertEqual(bad, "line 2: missing title")
+        self.assertEqual([r["title"] for r in rows], ["ok"])
+
+    def test_blank_title_is_missing_title(self):
+        self.assertEqual(climod.parse_tickets('{"title": "   "}')[1],
+                         "line 1: missing title")
+
+    def test_only_the_first_bad_line_is_named(self):
+        bad = climod.parse_tickets('{"nope": 1}\n{"also": 2}\n')[1]
+        self.assertEqual(bad, "line 1: missing title")
+
+    def test_bad_json_and_non_objects_are_reported(self):
+        self.assertEqual(climod.parse_tickets("{not json")[1], "line 1: invalid JSON")
+        self.assertEqual(climod.parse_tickets("[1, 2]")[1], "line 1: not a JSON object")
+
+    def test_optional_keys_pass_through(self):
+        rows, bad = climod.parse_tickets(
+            '{"title": "t", "body": "b", "tier": "strong", '
+            '"budget_usd": 5.0, "retries": 1}')
+        self.assertIsNone(bad)
+        self.assertEqual(rows[0], {"title": "t", "body": "b", "tier": "strong",
+                                   "budget_usd": 5.0, "retries": 1})
+
+    def test_defaults_when_optional_keys_are_absent(self):
+        row = climod.parse_tickets('{"title": "t"}')[0][0]
+        self.assertEqual(row["body"], "")
+        self.assertIsNone(row["tier"])
+        self.assertEqual(row["budget_usd"], 2.0)
+        self.assertEqual(row["retries"], 3)
+
+    def test_unknown_tier_is_rejected(self):
+        self.assertEqual(climod.parse_tickets('{"title": "t", "tier": "huge"}')[1],
+                         "line 1: tier must be cheap or strong")
+
+    def test_keys_the_queue_does_not_read_are_ignored(self):
+        row = climod.parse_tickets('{"title": "t", "blast": "high"}')[0][0]
+        self.assertNotIn("blast", row)
+
+    def test_empty_text_yields_no_rows_and_no_error(self):
+        self.assertEqual(climod.parse_tickets(""), ([], None))
 
 
 if __name__ == "__main__":
