@@ -72,15 +72,15 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 12:14 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 15:55 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>19</b><span>tickets</span></div>
   <div class="stat"><b class="ok">16</b><span>merged</span></div>
   <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
   <div class="stat"><b>61</b><span>agent runs</span></div>
-  <div class="stat"><b>44</b><span>commits</span></div>
-  <div class="stat"><b>146</b><span>tests green</span></div>
+  <div class="stat"><b>51</b><span>commits</span></div>
+  <div class="stat"><b>152</b><span>tests green</span></div>
   <div class="stat"><b>$7.38</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
@@ -114,6 +114,7 @@
 <tr><td><b>Nov 17</b></td><td>The factory builds itself: tickets 1–11 shipped by the agent (PRs #1–#19) — <code>show</code>/<code>runs</code>/<code>retry</code>/<code>tier</code>/<code>status</code>, bulk <code>add --from-file</code>, <code>sync</code> (PR verdict → queue), scoped factory token, Projects board. Two of those tickets were bugs <em>in the factory itself</em> (#17 budget timezone, #18 stale-branch retry).</td></tr>
 <tr><td><b>Nov 18</b></td><td>Hardening day: <code>append_file</code> tool ends the test-writing thrash; junk-PR gate after PR #37; the last blocked tickets turn out to be <em>bad ticket specs</em>, get split, and ship first try. Board closes at <b>19/19 Done, zero blocked</b>.</td></tr>
 <tr><td><b>Nov 18 · Phase 2</b></td><td>Unattended operation: <code>factory tick</code> (reap → sync → board → build ≤2 → alert) on Windows Task Scheduler every 15 min; Discord/Slack webhook alerts, silent when quiet; <code>factory import-issues</code> — a GitHub issue labelled <code>factory</code> from any device becomes a queued ticket, PR closes it via <code>Closes #N</code>; secrets leave <code>factory.json</code> (<code>env:</code> expansion, gh-login is the one credential); <code>scripts/enable_review_gate.sh</code> staged for the second account. 19 new tests, 146 green.</td></tr>
+<tr><td><b>Nov 18 · Phase 3</b></td><td><b>First real customer: <a href="https://github.com/yongsheng-bit/petro-tools">petro-tools</a></b> — the gas-bar paperwork toolchain (receipt scan → CSV → Dips.xlsx → Shift_Report.xlsx → audit). Skeleton, CI and harness tests scaffolded by hand; the backlog — 14 tickets distilled from the three proven petro skills, each with synthetic-fixture acceptance criteria — filed as <code>factory</code>-labelled issues. Factory goes multi-repo: <code>factory-petro.json</code> (own DB, own budget, no board) and the scheduler wrapper now ticks every config in sequence on one engine.</td></tr>
 </table>
 
 <h2 id="incidents">Incident log — what broke and what it taught us</h2>
@@ -299,7 +300,7 @@
 </ol>
 
 <h2>Current state &amp; parked work</h2>
-<p><b>Unattended since Nov 18: Task Scheduler runs <code>factory tick</code> every 15 minutes</b> (reap stale runs → sync PR verdicts → board → build ≤2 tickets → alert). 146 tests green on Linux + Windows, everything pushed.</p>
+<p><b>Unattended since Nov 18: Task Scheduler runs <code>factory tick</code> every 15 minutes</b> (reap stale runs → sync PR verdicts → board → build ≤2 tickets → alert). 152 tests green on Linux + Windows, everything pushed. <b>Since Nov 18 · Phase 3 it serves two repos</b>: the factory itself (<code>factory.json</code>) and <a href="https://github.com/yongsheng-bit/petro-tools">petro-tools</a> (<code>factory-petro.json</code> — own DB <code>petro.db</code>, own $10/day budget, board skipped where there is no <code>project_id</code>); the scheduler wrapper runs both configs sequentially so the single local engine never serves two builds at once.</p>
 <ul>
   <li><b>File tickets from anywhere</b> — <code>factory import-issues</code>: open a GitHub issue with the <code>factory</code> label (add <code>tier:strong</code> to route it), next tick queues it, the shipped PR closes it. Runs inside every tick.</li>
   <li><b>Alerts</b> — escalations, budget stops, merged verdicts and ready PRs post to <code>FACTORY_WEBHOOK</code> (Discord dialect). <span class="num">David: create a channel webhook and <code>setx FACTORY_WEBHOOK &lt;url&gt;</code> to turn it on; silent until then.</span></li>
