@@ -1492,5 +1492,42 @@ class TestAddFromFile(unittest.TestCase):
         self.assertEqual(printed, [str(r["id"]) for r in reversed(rows)])
 
 
+class TestSpendToday(unittest.TestCase):
+    """The daily cap resets at *local* midnight, so the boundary must follow the
+    machine's timezone, not a UTC day. `now` is injectable, so the tests hand it
+    in directly instead of faking the clock."""
+
+    def _midnight(self):
+        """Local midnight, computed from the wall clock fields so it is correct
+        whatever timezone the suite runs in."""
+        import time
+        t = time.localtime()
+        seconds_today = t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec
+        return time.time() - seconds_today
+
+    def _run_at(self, con, started_at, cost):
+        con.execute(
+            "INSERT INTO runs (ticket_id, attempt, status, cost_usd, detail,"
+            " started_at, ended_at) VALUES (?,?,?,?,?,?,?)",
+            (1, 1, "ok", cost, "", started_at, started_at + 1))
+
+    def test_sums_only_runs_since_local_midnight(self):
+        """A run started 100s before local midnight is yesterday's spend; the
+        two after it are today's, and only those two count toward the cap."""
+        import time
+        con = fresh_db(self)
+        midnight = self._midnight()
+        self._run_at(con, midnight - 100, 5.00)
+        self._run_at(con, midnight + 10, 0.75)
+        self._run_at(con, midnight + 20, 0.25)
+        self.assertAlmostEqual(dbmod.spend_today(con, now=time.time()), 1.0)
+
+    def test_zero_when_no_runs_today(self):
+        import time
+        con = fresh_db(self)
+        self._run_at(con, self._midnight() - 100, 5.00)
+        self.assertAlmostEqual(dbmod.spend_today(con, now=time.time()), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
