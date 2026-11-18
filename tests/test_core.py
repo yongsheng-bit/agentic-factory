@@ -1241,6 +1241,13 @@ class TestAgentEnv(unittest.TestCase):
                                    env_extra={"PATH": "/opt/tools/bin:{PATH}"})
         self.assertEqual(env["PATH"], "/opt/tools/bin:/usr/bin")
 
+    def test_override_replaces_every_spelling(self):
+        env = agentmod.minimal_env(base=self.BASE,
+                                   env_extra={"PATH": "/opt/tools/bin:{PATH}"})
+        self.assertEqual(sorted(k for k in env if k.upper() == "PATH"), ["PATH"],
+                         "a stale Path/PATH twin lets the loader ignore the override")
+        self.assertEqual(env["PATH"], "/opt/tools/bin:/usr/bin")
+
     def test_config_env_reaches_the_agent_run(self):
         spec = {"command": [sys.executable, "-c",
                             "import os; print(os.environ.get('PETRO_ENV_MARK', ''))"],

@@ -246,6 +246,8 @@ def minimal_env(base=None, allow_extra=(), spec_env=None, env_extra=None):
     for src in (spec_env, env_extra):
         if src:
             for name, value in src.items():
+                for other in [k for k in env if k.upper() == name.upper() and k != name]:
+                    del env[other]
                 env[name] = str(value).replace("{PATH}", base_path)
     return env
 
