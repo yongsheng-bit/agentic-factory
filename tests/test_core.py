@@ -16,6 +16,7 @@ from factory import cli as climod
 from factory import db as dbmod
 from factory import gates
 from factory import sync as syncmod
+from factory import worker as workermod
 from factory import worktree
 
 
@@ -136,6 +137,17 @@ class TestQueue(unittest.TestCase):
         con.execute("UPDATE runs SET started_at = 1 WHERE id=?", (run,))
         self.assertEqual(dbmod.mark_stale_running_failed(con, older_than=60), 1)
         self.assertEqual(dbmod.get_ticket(con, tid)["status"], "escalated")
+
+    def test_escalate_survives_its_own_db_call(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "doomed")
+        ticket = dbmod.get_ticket(con, tid)
+        self.assertEqual(
+            workermod._escalate(con, ticket, {}, "retries exhausted"), "escalated")
+        self.assertEqual(dbmod.get_ticket(con, tid)["status"], "escalated")
+        rows = con.execute("SELECT why FROM escalations WHERE ticket_id=?",
+                           (tid,)).fetchall()
+        self.assertEqual([r["why"] for r in rows], ["retries exhausted"])
 
     def test_concurrent_workers_via_separate_connections(self):
         fd, path = tempfile.mkstemp(suffix=".db")

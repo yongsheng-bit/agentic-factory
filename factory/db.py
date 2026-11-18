@@ -58,6 +58,13 @@ CREATE TABLE IF NOT EXISTS control (
     id     INTEGER PRIMARY KEY CHECK (id = 1),
     paused INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS escalations (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id  INTEGER NOT NULL REFERENCES tickets(id),
+    why        TEXT    NOT NULL,
+    created_at REAL    NOT NULL
+);
 """
 
 
@@ -179,6 +186,16 @@ def finish(con, ticket_id, status, detail=""):
     con.execute("UPDATE tickets SET status=?, updated_at=? WHERE id=?",
                 (status, time.time(), ticket_id))
     return detail
+
+
+def add_escalation(con, ticket_id, why):
+    """Persist why a ticket left the queue for a human.
+
+    An escalation that only lives in a log line cannot be audited later:
+    the queue must answer 'what did it give up on, and why' from the DB.
+    """
+    con.execute("INSERT INTO escalations (ticket_id, why, created_at) VALUES (?,?,?)",
+                (ticket_id, why, time.time()))
 
 
 RETRYABLE = ("failed", "escalated", "closed")

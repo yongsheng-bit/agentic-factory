@@ -17,7 +17,7 @@ from . import gates, notify, worktree as wt
 
 
 def _escalate(con, ticket, cfg, why):
-    dbmod.finish(con, ticket["id"], "escalated", error=why)
+    dbmod.finish(con, ticket["id"], "escalated", detail=why)
     dbmod.add_escalation(con, ticket["id"], why)
     notify.post(cfg, "ESCALATION", f"ticket {ticket['id']}: {why}")
     return "escalated"
