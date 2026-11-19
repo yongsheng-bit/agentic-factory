@@ -14,7 +14,8 @@ import time
 from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
-from . import gates, mutate, notify, refine as refinemod, review as reviewmod, worktree as wt
+from . import gates, mutate, notify, preview as previewmod
+from . import refine as refinemod, review as reviewmod, worktree as wt
 
 try:
     import msvcrt
@@ -274,6 +275,8 @@ def _process_once(cfg, con, dry=False):
 
                 return _escalate(con, ticket, cfg, f"push/PR failed: {exc}")
             dbmod.set_pr(con, ticket["id"], pr_url)
+            if pr_url:
+                previewmod.run_preview(path, diff_text, cfg, pr_url)
 
         if level == "high":
             dbmod.finish(con, ticket["id"], "needs_review")
