@@ -14,7 +14,7 @@ import time
 from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
-from . import gates, notify, worktree as wt
+from . import gates, notify, refine as refinemod, review as reviewmod, worktree as wt
 
 try:
     import msvcrt
@@ -115,6 +115,15 @@ def _process_once(cfg, con, dry=False):
     tier, tier_reason = agentmod.tier_decision(cfg, ticket)
     spec = cfg["agent"][tier]
     attempt = int(ticket["attempts"]) + 1
+
+    if attempt == 1 and (cfg.get("refine") or {}).get("enabled"):
+        problems = refinemod.check(cfg, con, ticket)
+        if problems:
+            why = "; ".join(problems)
+            dbmod.finish(con, ticket["id"], "needs_info")
+            dbmod.add_escalation(con, ticket["id"], "refine: " + why)
+            notify.post(cfg, "NEEDS INFO", f"ticket {ticket['id']}: {why}")
+            return "needs_info: " + why[:120]
 
     path = branch = None
     keep_branch = False
@@ -225,6 +234,13 @@ def _process_once(cfg, con, dry=False):
                 f"gate: {'; '.join(gate['tools'])} clean\n")
         if ticket["issue_number"]:
             body += f"\nCloses #{ticket['issue_number']}\n"
+
+        verdict, notes = reviewmod.review_diff(cfg, ticket, diff_text)
+        if verdict:
+            body += f"\nAI review: **{verdict}** — {notes}\n"
+        else:
+            body += f"\nAI review: unavailable ({notes})\n"
+        print(f"ai review: {verdict or notes}", flush=True)
 
         pr_url = None
         if cfg.get("push", True):

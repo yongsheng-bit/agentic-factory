@@ -15,6 +15,8 @@ from factory import blast as blastmod
 from factory import cli as climod
 from factory import db as dbmod
 from factory import gates
+from factory import refine as refinemod
+from factory import review as reviewmod
 from factory import sync as syncmod
 from factory import worker as workermod
 from factory import worktree
@@ -269,6 +271,134 @@ class TestAgent(unittest.TestCase):
         self.assertIsNone(agentmod._inner_status("traceback...\nnot json"))
         self.assertEqual(agentmod._inner_status('noise\n{"status": "budget"}'),
                          "budget")
+
+
+class TestRepoRulesInjection(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+
+    def test_repo_rules_reads_and_caps_agents_md(self):
+        with open(os.path.join(self.dir, "AGENTS.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# Rules\nuse synthetic fixtures")
+        self.assertIn("synthetic fixtures", agentmod.repo_rules(self.dir))
+        with open(os.path.join(self.dir, "AGENTS.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("x" * (agentmod.AGENTS_MD_CAP + 100))
+        capped = agentmod.repo_rules(self.dir)
+        self.assertTrue(capped.endswith("[AGENTS.md truncated at 8000 chars]"))
+        self.assertLessEqual(len(capped),
+                             agentmod.AGENTS_MD_CAP + 60)
+
+    def test_repo_rules_missing_is_empty(self):
+        self.assertEqual(agentmod.repo_rules(self.dir), "")
+
+    def test_prompt_injects_repo_rules_before_criteria(self):
+        with open(os.path.join(self.dir, "AGENTS.md"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("VERIFICATION CONTRACT BODY")
+        ticket = {"id": 1, "ref": "", "title": "t", "body": "ticket body",
+                  "max_retries": 3}
+        out = tempfile.mkdtemp()
+        p = agentmod.write_prompt(self.dir, ticket, 1, criteria="C1",
+                                  out_dir=out)
+        text = open(p, encoding="utf-8").read()
+        self.assertIn("## Repo rules", text)
+        self.assertLess(text.index("ticket body"),
+                        text.index("## Repo rules"))
+        self.assertLess(text.index("## Repo rules"),
+                        text.index("## Acceptance criteria"))
+
+
+class TestAIReviewer(unittest.TestCase):
+    def test_parse_verdict_accepts_both_verdicts(self):
+        self.assertEqual(
+            reviewmod._parse_verdict('{"verdict": "approve", "notes": "ok"}'),
+            ("approve", "ok"))
+        concerns = reviewmod._parse_verdict(
+            'noise {"verdict": "CONCERNS", "notes": "dup logic"} noise')
+        self.assertEqual((concerns or ("", ""))[0], "concerns")
+
+    def test_parse_verdict_rejects_garbage(self):
+        self.assertIsNone(reviewmod._parse_verdict("looks good to me"))
+        self.assertIsNone(reviewmod._parse_verdict('{"verdict": "maybe"}'))
+        self.assertIsNone(reviewmod._parse_verdict("[1,2,3]"))
+
+    def test_parse_verdict_survives_stray_braces_and_fences(self):
+        fenced = '```json\n{"verdict": "approve", "notes": "ok"}\n```'
+        self.assertEqual(reviewmod._parse_verdict(fenced),
+                         ("approve", "ok"))
+        stray = 'config {a: 1} then {"verdict": "concerns", "notes": "dup"}'
+        self.assertEqual(reviewmod._parse_verdict(stray),
+                         ("concerns", "dup"))
+
+    def test_review_disabled_by_default(self):
+        ticket = {"id": 1, "title": "t", "body": ""}
+        self.assertEqual(reviewmod.review_diff({}, ticket, "diff"),
+                         (None, "review disabled"))
+
+    def test_review_without_engine_config(self):
+        ticket = {"id": 1, "title": "t", "body": ""}
+        cfg = {"review": {"enabled": True}}
+        self.assertEqual(reviewmod.review_diff(cfg, ticket, "diff"),
+                         (None, "review not configured"))
+
+
+class TestRefinement(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.dir, "petro"))
+        with open(os.path.join(self.dir, "petro", "dips.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("def resolve_blocks():\n    pass\n")
+
+    def test_symbols_extraction(self):
+        syms = refinemod.symbols(
+            "use `petro.dips.resolve_blocks()` and edit `petro/audit.py` "
+            "and `finish()`")
+        self.assertIn("petro.dips.resolve_blocks", syms)
+        self.assertIn("petro/audit.py", syms)
+        self.assertNotIn("finish", syms)
+
+    def test_existing_symbols_pass(self):
+        self.assertEqual(
+            refinemod.symbol_problems(
+                self.dir, "call `petro.dips.resolve_blocks`", []), [])
+
+    def test_missing_attribute_is_a_problem(self):
+        problems = refinemod.symbol_problems(
+            self.dir, "call `petro.dips.missing_fn`", [])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("missing_fn", problems[0])
+
+    def test_sibling_ticket_naming_the_symbol_clears_it(self):
+        self.assertEqual(
+            refinemod.symbol_problems(
+                self.dir, "call `petro.dips.missing_fn`",
+                ["create missing_fn in dips"]), [])
+
+    def test_missing_file_is_a_problem(self):
+        problems = refinemod.symbol_problems(
+            self.dir, "edit `petro/ghost.py`", [])
+        self.assertEqual(len(problems), 1)
+
+    def test_duplicate_titles_are_flagged(self):
+        tickets = [{"id": 1, "title": "parse receipts from PDF",
+                    "status": "queued"},
+                   {"id": 2, "title": "parse reciepts from PDFs",
+                    "status": "queued"},
+                   {"id": 3, "title": "audit workbook", "status": "merged"}]
+        problems = refinemod.duplicate_problems(tickets, tickets[0])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("ticket 2", problems[0])
+
+    def test_retry_can_revive_needs_info(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "x")
+        dbmod.finish(con, tid, "needs_info")
+        ok, msg = dbmod.retry_ticket(con, tid)
+        self.assertTrue(ok, msg)
+        self.assertEqual(dbmod.get_ticket(con, tid)["status"], "queued")
 
 
 class TestSecretGate(unittest.TestCase):

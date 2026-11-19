@@ -126,6 +126,26 @@ def build_argv(spec, prompt, prompt_path):
     return out
 
 
+AGENTS_MD_CAP = 8000
+
+
+def repo_rules(workdir):
+    """The repo's own AGENTS.md, capped, for prompt injection (issue #51).
+
+    A repo's AGENTS.md carries the verification contract its maintainers
+    actually enforce; without injection it documents humans only and every
+    agent run starts illiterate about it.
+    """
+    try:
+        with open(os.path.join(workdir, "AGENTS.md"), encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except OSError:
+        return ""
+    if len(text) > AGENTS_MD_CAP:
+        text = text[:AGENTS_MD_CAP] + "\n[AGENTS.md truncated at 8000 chars]"
+    return text
+
+
 def write_prompt(workdir, ticket, attempt, extra="", criteria="", out_dir=None):
     """Write the prompt OUTSIDE the worktree.
 
@@ -136,10 +156,14 @@ def write_prompt(workdir, ticket, attempt, extra="", criteria="", out_dir=None):
     out_dir = out_dir or os.path.join(tempfile.gettempdir(), "agentic-factory-prompts")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"ticket-{ticket['id']}-attempt-{attempt}.md")
+    rules = repo_rules(workdir)
+    print(f"agents.md: included ({len(rules)} chars)" if rules
+          else "agents.md: none")
     body = (
         f"# Task {ticket['ref'] or ticket['id']}: {ticket['title']}\n\n"
         f"{ticket['body']}\n\n"
-        f"## Rules\n"
+        + (f"## Repo rules\n{rules}\n\n" if rules else "")
+        + f"## Rules\n"
         f"- You are attempt {attempt} of {ticket['max_retries']} in an automated pipeline.\n"
         f"- Work only inside the current directory. Do not touch other checkouts.\n"
         f"- Do not commit, push, or open pull requests; the orchestrator does that.\n"

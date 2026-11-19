@@ -217,7 +217,7 @@ def add_escalation(con, ticket_id, why):
                 (ticket_id, why, time.time()))
 
 
-RETRYABLE = ("failed", "escalated", "closed")
+RETRYABLE = ("failed", "escalated", "closed", "needs_info")
 RETRY_REFUSED = ("queued", "running", "pr_open", "needs_review", "merged")
 
 
