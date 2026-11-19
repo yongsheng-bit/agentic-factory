@@ -95,22 +95,45 @@ def render_pages(worktree, cfg, out_dir):
     return [os.path.join(out_dir, page) for page in pages]
 
 
-def screenshot_pages(html_paths, out_dir):
-    """Full-page Chromium screenshots of the rendered pages; returns PNGs."""
-    from playwright.sync_api import sync_playwright
-    pngs = []
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch()
-        page = browser.new_page(viewport={"width": 1280, "height": 900})
-        for html_path in html_paths:
-            page.goto("file:///" + os.path.abspath(html_path).replace("\\", "/"))
-            page.wait_for_load_state("networkidle")
-            png = os.path.join(
-                out_dir, os.path.splitext(os.path.basename(html_path))[0] + ".png")
-            page.screenshot(path=png, full_page=True)
-            pngs.append(png)
-        browser.close()
-    return pngs
+SCREENSHOT_SCRIPT = """
+import os
+import sys
+from playwright.sync_api import sync_playwright
+
+out_dir = sys.argv[1]
+made = []
+with sync_playwright() as pw:
+    browser = pw.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 900})
+    for html_path in sys.argv[2:]:
+        page.goto("file:///" + os.path.abspath(html_path).replace("\\\\", "/"))
+        page.wait_for_load_state("networkidle")
+        png = os.path.join(
+            out_dir,
+            os.path.splitext(os.path.basename(html_path))[0] + ".png")
+        page.screenshot(path=png, full_page=True)
+        made.append(png)
+    browser.close()
+print("\\n".join(made))
+"""
+
+
+def screenshot_pages(html_paths, out_dir, python=None):
+    """Full-page Chromium screenshots via the preview python subprocess.
+
+    The factory is stdlib-only, so playwright is never imported here:
+    the screenshots run inside the customer venv (which has playwright
+    and its Chromium) and only the resulting PNG paths cross back.
+    """
+    proc = subprocess.run([python or sys.executable, "-c", SCREENSHOT_SCRIPT,
+                           out_dir] + list(html_paths),
+                          timeout=180, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        raise RuntimeError("screenshot failed: %s"
+                           % ((proc.stderr or "")[-300:]))
+    return [line.strip() for line in (proc.stdout or "").splitlines()
+            if line.strip().endswith(".png")]
 
 
 def comment_body(png_paths):
@@ -133,7 +156,7 @@ def post_comment(pr_url, body, png_paths, worktree, gh_path=None, token=None):
     args = [wt._gh_binary(gh_path), "pr", "comment", pr_url,
             "--body-file", body_file]
     for png in png_paths:
-        args += ["--image", png]
+        args += ["--attach", png]
     proc = subprocess.run(args, cwd=worktree, timeout=300,
                           capture_output=True, text=True,
                           encoding="utf-8", errors="replace",
@@ -158,7 +181,8 @@ def run_preview(worktree, diff_text, cfg, pr_url, out_dir=None):
         if out_dir is None:
             import tempfile
             out_dir = tempfile.mkdtemp(prefix="factory-preview-")
-        pngs = screenshot_pages(render_pages(worktree, cfg, out_dir), out_dir)
+        pngs = screenshot_pages(render_pages(worktree, cfg, out_dir), out_dir,
+                                python=preview.get("python"))
         if not pngs:
             return False
         ok = post_comment(pr_url, comment_body(pngs), pngs, worktree,
