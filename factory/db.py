@@ -188,6 +188,20 @@ def finish(con, ticket_id, status, detail=""):
     return detail
 
 
+def log_failure(con, ticket_id, detail, tier_reason="gate"):
+    """Record a gate failure as a fail run row so the retry prompt sees it.
+
+    last_failure() reads run details; a failure that never becomes a row is
+    invisible to the next attempt - the agent would repeat the mistake blind.
+    """
+    r = con.execute("SELECT attempts FROM tickets WHERE id=?", (ticket_id,)).fetchone()
+    con.execute(
+        "INSERT INTO runs (ticket_id, attempt, status, cost_usd, detail, tier,"
+        " tier_reason, started_at, ended_at)"
+        " VALUES (?, ?, 'fail', 0, ?, 'gate', ?, strftime('%s','now'), strftime('%s','now'))",
+        (ticket_id, r["attempts"] if r else 0, detail[:4000], tier_reason))
+
+
 def add_escalation(con, ticket_id, why):
     """Persist why a ticket left the queue for a human.
 

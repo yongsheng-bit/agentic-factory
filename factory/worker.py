@@ -197,7 +197,8 @@ def _process_once(cfg, con, dry=False):
                 dbmod.bump_attempt(con, ticket["id"])
                 if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
                     return _escalate(con, ticket, cfg, why)
-                dbmod.finish(con, ticket["id"], "queued", detail=why)
+                dbmod.log_failure(con, ticket["id"], why)
+                dbmod.finish(con, ticket["id"], "queued")
                 return "retry (tests failing)"
 
 

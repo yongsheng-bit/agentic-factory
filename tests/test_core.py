@@ -130,6 +130,12 @@ class TestQueue(unittest.TestCase):
         dbmod.end_run(con, run, "fail", 0.1, "TypeError: nope")
         self.assertIn("TypeError", dbmod.last_failure(con, tid))
 
+    def test_log_failure_feeds_retry_prompt(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "x")
+        dbmod.log_failure(con, tid, "tests failing:\nFAILED tests/test_x.py")
+        self.assertIn("FAILED tests/test_x.py", dbmod.last_failure(con, tid))
+
     def test_watchdog_reaps_stale_runs(self):
         con = fresh_db(self)
         tid = dbmod.add_ticket(con, "orphan")
