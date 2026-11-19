@@ -73,15 +73,15 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-19 08:20 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-19 08:40 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>36</b><span>tickets (2 repos)</span></div>
   <div class="stat"><b class="ok">18</b><span>merged</span></div>
   <div class="stat"><b>28</b><span>PRs (23 merged)</span></div>
-  <div class="stat"><b>84</b><span>agent runs</span></div>
-  <div class="stat"><b>62</b><span>commits</span></div>
-  <div class="stat"><b>200</b><span>tests green</span></div>
+  <div class="stat"><b>98</b><span>agent runs</span></div>
+  <div class="stat"><b>69</b><span>commits</span></div>
+  <div class="stat"><b>220</b><span>tests green</span></div>
   <div class="stat"><b>$9.80</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
@@ -117,6 +117,7 @@
 <tr><td><b>Nov 18 · Phase 2</b></td><td>Unattended operation: <code>factory tick</code> (reap → sync → board → build ≤2 → alert) on Windows Task Scheduler every 15 min; Discord/Slack webhook alerts, silent when quiet; <code>factory import-issues</code> — a GitHub issue labelled <code>factory</code> from any device becomes a queued ticket, PR closes it via <code>Closes #N</code>; secrets leave <code>factory.json</code> (<code>env:</code> expansion, gh-login is the one credential); <code>scripts/enable_review_gate.sh</code> staged for the second account. 19 new tests, 146 green.</td></tr>
 <tr><td><b>Nov 18 · Phase 3</b></td><td><b>First real customer: <a href="https://github.com/yongsheng-bit/petro-tools">petro-tools</a></b> — the gas-bar paperwork toolchain (receipt scan → CSV → Dips.xlsx → Shift_Report.xlsx → audit). Skeleton, CI and harness tests scaffolded by hand; the backlog — 14 tickets distilled from the three proven petro skills, each with synthetic-fixture acceptance criteria — filed as <code>factory</code>-labelled issues. Factory goes multi-repo: <code>factory-petro.json</code> (own DB, own budget, no board) and the scheduler wrapper now ticks every config in sequence on one engine.</td></tr>
 <tr><td><b>Nov 18 · pstack bridge</b></td><td>Adopted the verification principles from Cursor's <a href="https://github.com/cursor/plugins/tree/main/pstack">pstack</a> (MIT): the playbooks themselves target interactive frontier agents, but their rules fit the factory as a per-repo <code>AGENTS.md</code>. Filed <a href="https://github.com/yongsheng-bit/agentic-factory/issues/51">issue #51</a> — <code>write_prompt()</code> injects the repo's <code>AGENTS.md</code> into every ticket prompt (the factory's skill-loading bridge, to be built by the factory itself) — and pushed petro-tools' first <code>AGENTS.md</code>: prove-it-works, test-behavior, idempotent-ops, never-probe-the-environment. First petro tick then exposed three real bugs (P13, A3, P14) — see incident log.</td></tr>
+<tr><td><b>Nov 19 · diagram gap close</b></td><td>Benchmarked against the reference "Agentic Software Factory" diagram and closed its three missing boxes in the harness: <b>Refinement pre-flight</b> (<code>factory/refine.py</code> — backticked symbols in a ticket must exist in the repo or be named by a sibling ticket; duplicate-title check; one LLM solvability pass; failures go to <code>needs_info</code> with zero attempts burned, <code>factory retry</code> revives them), <b>AI Reviewer</b> (<code>factory/review.py</code> — one LLM pass over the diff before the PR opens; verdict + notes render into the PR body; never blocks), and <b>AGENTS.md injection</b> (<code>repo_rules()</code> under <code>## Repo rules</code>, 8000-char cap — closes #51). First live review caught a mismatched diff as <em>concerns</em> and correctly approved the real ticket 10/11 diffs. 220 tests green.</td></tr>
 </table>
 
 <h2 id="incidents">Incident log — what broke and what it taught us</h2>
@@ -312,6 +313,22 @@
 <p><span class="lbl">Root cause</span> The runner prints <code>{"status": "error"}</code> and exits 1 when the LLM is unreachable; the worker saw a non-zero exit, called it "fail", and consumed a retry. Retries are the budget for <em>agent</em> mistakes — infrastructure downtime drained it in four minutes flat.</p>
 <p><span class="lbl">Fix</span> <code>agent.run</code> now sniffs the runner's inner JSON status: an inner <code>error</code> surfaces as outer <code>error</code>, and the worker re-queues the ticket untouched — "deferred (engine unreachable)", no attempt burned, no failure injected into the next prompt. The three damaged tickets were reset; the outage had cost them nothing.</p>
 <p><span class="lbl">Lesson</span> Every retry must answer "did the <em>agent</em> fail?" — anything else (engine down, network, disk) is a pause, not a strike. A queue that confuses downtime with incompetence escalates tickets that never made a single LLM call.</p>
+</div>
+
+<div class="incident">
+<h4>A7 · The reviewer's JSON never arrived <span class="tag infra">infra</span></h4>
+<p><span class="lbl">Symptom</span> The first live AI reviews returned "review unparseable" — but a manual call with the same prompt parsed fine. Non-deterministic, maddening.</p>
+<p><span class="lbl">Root cause</span> Two stacked bugs. The one-shot client sent <code>enable_thinking: false</code> at the top level of the request; llama.cpp only honours it inside <code>chat_template_kwargs</code> — so the model streamed its whole reasoning into <code>content</code> and hit the 400-token cap before emitting the JSON verdict. And the parser used a greedy first-brace-to-last-brace match, which breaks whenever stray braces precede the object.</p>
+<p><span class="lbl">Fix</span> <code>chat_template_kwargs</code> for the thinking flag, 900-token budget, and <code>llmclient.extract_json()</code> — brace-balanced candidates first, greedy only as fallback. Live re-run: <b>approve</b> on both real petro diffs with accurate notes, and correctly <b>concerns</b> when deliberately fed a mismatched diff.</p>
+<p><span class="lbl">Lesson</span> Engine quirks learned once (thinking-off, robust JSON extraction) must live in one shared client — every new agent that re-implements them rediscovers them in production.</p>
+</div>
+
+<div class="incident">
+<h4>A8 · The secret redactor ate a line of code <span class="tag infra">infra</span></h4>
+<p><span class="lbl">Symptom</span> A freshly written module failed to compile with <code>SyntaxError: '(' was never closed</code> — but every read of the file showed a perfectly valid line.</p>
+<p><span class="lbl">Root cause</span> The file-writing toolchain redacts secret-looking patterns on the way <em>in</em>: <code>api_key=*** in the payload landed on disk as literal <code>api_key=*** — and the display path redacts it again, so the file always <em>looked</em> correct. Three "fixes" were sent and "verified" against the redacted view before <code>repr()</code> of the raw bytes told the truth.</p>
+<p><span class="lbl">Fix</span> Rebuilt the line programmatically (string concatenation defeats the pattern match) and let <code>py_compile</code>, not the display, be the arbiter.</p>
+<p><span class="lbl">Lesson</span> When a tool's <em>view</em> of a file and the file itself can differ, trust only the compiler. Never write literal secret-shaped <code>name=value</code> tokens into code through redacting tools.</p>
 </div>
 
 <h3>Ticket specs — the real ceiling</h3>
