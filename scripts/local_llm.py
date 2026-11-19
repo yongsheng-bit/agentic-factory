@@ -19,7 +19,7 @@ Safety posture
   only by how long you let it be wrong.
 
 Usage:  python local_llm.py <prompt-file>
-Env:    LLM_BASE, LLM_MODEL, LLM_MAX_STEPS, LLM_MAX_TOKENS, LLM_MAX_CONTEXT,
+Env:    LLM_BASE, LLM_MODEL, LLM_MAX_STEPS, LLM_WANDER_LIMIT, LLM_MAX_TOKENS, LLM_MAX_CONTEXT,
         LLM_TIMEOUT
 Exit:   0 after finish() OR when files were changed (the orchestrator's
         gates judge the diff; an unfinished-but-tested diff beats a
@@ -43,6 +43,7 @@ import urllib.request
 BASE = os.environ.get("LLM_BASE", "http://192.168.68.73:8080/v1").rstrip("/")
 MODEL = os.environ.get("LLM_MODEL", "qwen3.8-flash-next-unsloth-ud-iq4_xs")
 MAX_STEPS = int(os.environ.get("LLM_MAX_STEPS", "20"))
+WANDER_LIMIT = int(os.environ.get("LLM_WANDER_LIMIT", "8"))
 MAX_TOTAL_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "600000"))
 MAX_CONTEXT_TOKENS = int(os.environ.get("LLM_MAX_CONTEXT", "100000"))
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "240"))
@@ -417,6 +418,25 @@ DISPATCH = {"read_file": t_read, "write_file": t_write, "edit_file": t_edit,
 
 
 
+def wander_nudge(idle_steps, limit=None):
+    """A message that forces an exploring agent to start writing, or None.
+
+    Small models left in explore mode search one word across every file
+    glob until the step budget dies - the duplicate-call guard is evaded
+    by varying the glob. After `limit` consecutive steps that changed no
+    file, and every few steps after, the harness stops asking politely:
+    the next reply must be a write or a finish.
+    """
+    limit = WANDER_LIMIT if limit is None else limit
+    if idle_steps >= limit and (idle_steps - limit) % 4 == 0:
+        return ("STOP EXPLORING. You have gone " + str(idle_steps) +
+                " steps without changing any file. Your next reply must be "
+                "write_file, append_file or edit_file implementing the ticket "
+                "(a first draft is fine), or finish if the work is already "
+                "done. Do not read or search anything else.")
+    return None
+
+
 def chat_body(messages):
     """The request payload for one step.
 
@@ -506,6 +526,7 @@ def main():
                 {"role": "user", "content": f"## Repository files\n{repo_tree()}\n\n{task}"}]
 
     tin = tout = steps = 0
+    idle_steps = 0
     last_prompt = last_completion = 0
     summary = ""
     finished = False
@@ -520,6 +541,7 @@ def main():
         if exhausted(last_prompt, last_completion, cumulative=tin + tout):
             summary = "stopped: context budget exceeded"
             break
+        touched_before = len(CTX.touched)
         try:
             resp = chat(messages)
         except RuntimeError as exc:
@@ -613,6 +635,14 @@ def main():
 
         if finished:
             break
+
+        if len(CTX.touched) == touched_before:
+            idle_steps += 1
+        else:
+            idle_steps = 0
+        nudge = wander_nudge(idle_steps)
+        if nudge:
+            messages.append({"role": "user", "content": nudge})
 
     print(json.dumps({"status": "completed" if finished else "budget",
                       "result": summary[:2000], "steps": steps,

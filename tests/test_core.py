@@ -1676,6 +1676,12 @@ class TestChatBody(unittest.TestCase):
             body = self.llm.chat_body([{"role": "user", "content": "x"}])
         self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
 
+    def test_wander_nudge_fires_at_limit_then_every_four(self):
+        self.assertIsNone(self.llm.wander_nudge(7, limit=8))
+        self.assertIn("STOP EXPLORING", self.llm.wander_nudge(8, limit=8))
+        self.assertIsNone(self.llm.wander_nudge(9, limit=8))
+        self.assertIn("STOP EXPLORING", self.llm.wander_nudge(12, limit=8))
+
 
 class TestEngineLock(unittest.TestCase):
     def setUp(self):
