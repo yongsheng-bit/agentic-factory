@@ -72,7 +72,7 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 17:09 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 22:34 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>19</b><span>tickets</span></div>
@@ -279,6 +279,14 @@
 <p><span class="lbl">Root cause</span> The ticket body asserted "the environment already has openpyxl and PyMuPDF installed." It did not — the agent's <code>python</code> was the orchestrator's own interpreter, which had neither. The model correctly detected a contradiction between the spec and reality, and then, having no instruction for that state, investigated instead of writing. A small model trusts the environment over the prompt, then trusts the prompt over itself, and thrashes.</p>
 <p><span class="lbl">Fix</span> Three parts: a dedicated venv (<code>petro-tools-env</code>, created with <code>--copies</code> — the default venv on this host is a uv-style trampoline that loses its venv context when resolved via PATH) with the deps installed; a config-driven <code>agent.env</code> overlay with <code>{PATH}</code> expansion so each repo pins its own toolchain; and an <code>AGENTS.md</code> rule: "never install packages, hunt for interpreters, or probe the environment — if an import fails, that is a bug in your code path, go straight to editing."</p>
 <p><span class="lbl">Lesson</span> Before blaming the model for a failed ticket, verify the ticket's environment claims are true and count write calls in the transcript. An agent that explores instead of editing is reporting something: its ground floor is lying to it.</p>
+</div>
+
+<div class="incident">
+<h4>A4 · The reasoning loop: 6000 tokens of thinking, zero action <span class="tag agent">agent</span></h4>
+<p><span class="lbl">Symptom</span> With the env fix and the 6k step cap in place, the agent finally wrote files — then stalled. 12 of 24 steps in one run ended at <b>exactly 6000 tokens with no tool call and empty content</b>: the whole output was the reasoning channel. Each looped step cost ~3 minutes; the run hit the 900 s wall again.</p>
+<p><span class="lbl">Root cause</span> On long agent histories (mid-conversation, once the model must actually produce the module), this Qwen reasoning build falls into a thinking loop — it never reaches the answer. The old 1600 cap had been <em>hiding</em> it: truncating the thinking sometimes forced early action (which is also why it could never write files). A fresh-prompt A/B showed all variants fine — the loop only reproduces mid-conversation, so the probe had to replay the real transcript history against the engine.</p>
+<p><span class="lbl">Fix</span> Measured replay at the exact loop point: baseline 6000 tok / no call; <code>reasoning_effort=low</code> 6000 tok / no call (not honored); <code>chat_template_kwargs: {enable_thinking: false}</code> → <b>1118 tokens, a clean <code>write_file</code></b>. New knob <code>LLM_DISABLE_THINKING=1</code> (per-tier env, default off), set for both petro tiers.</p>
+<p><span class="lbl">Lesson</span> A step that ends at exactly the output cap with no tool call is a loop signature — the no-call transcript line made it visible in one look. And knob experiments must replay the failure context: at step 1 every variant looks healthy.</p>
 </div>
 
 <h3>Ticket specs — the real ceiling</h3>
