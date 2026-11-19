@@ -89,6 +89,20 @@ def candidates(source, wanted_lines):
     return col.candidates
 
 
+def _is_test_file(path):
+    """True for test code, which the mutation gate must never mutate.
+
+    Mutants inside a test file cannot be killed by that same test - a
+    test-only ticket (e.g. "add a browser test") scored an impossible
+    0/12, and the failure message goaded the next attempt into rewriting
+    product code it was told to leave alone. Tests are the weapon in
+    this gate, never the target.
+    """
+    norm = path.replace("\\", "/")
+    return norm.startswith("tests/") or norm.rsplit("/", 1)[-1].startswith(
+        "test_")
+
+
 def plan(diff, read_file, max_mutants=12):
     """Deterministic mutant plan: [(path, source, wanted, index), ...].
 
@@ -102,7 +116,7 @@ def plan(diff, read_file, max_mutants=12):
     """
     per_file = {}
     for path, line_no, _ in added_lines(diff):
-        if path.endswith(".py"):
+        if path.endswith(".py") and not _is_test_file(path):
             per_file.setdefault(path, set()).add(line_no)
     plan_list = []
     for path in sorted(per_file):

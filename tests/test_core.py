@@ -433,6 +433,14 @@ class TestMutationGate(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(body)
 
+    def test_test_only_diff_is_skipped(self):
+        diff = ("--- a/tests/test_only.py\n+++ b/tests/test_only.py\n"
+                "@@ -0,0 +1,2 @@\n+import unittest\n+x = 1 and 2\n")
+        ok, report = mutatemod.run_mutations(
+            self.dir, diff, self.cmd, env=self.env)
+        self.assertTrue(ok)
+        self.assertIn("no candidates", report)
+
     def test_weak_suite_fails_the_gate(self):
         self._suite("test_trivial.py",
                     "import unittest\n"
