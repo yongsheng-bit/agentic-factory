@@ -72,16 +72,16 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 22:34 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 22:57 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
-  <div class="stat"><b>19</b><span>tickets</span></div>
-  <div class="stat"><b class="ok">16</b><span>merged</span></div>
-  <div class="stat"><b>25</b><span>PRs (23 merged)</span></div>
-  <div class="stat"><b>76</b><span>agent runs</span></div>
-  <div class="stat"><b>57</b><span>commits</span></div>
-  <div class="stat"><b>196</b><span>tests green</span></div>
-  <div class="stat"><b>$9.12</b><span>shadow spend</span></div>
+  <div class="stat"><b>22</b><span>tickets</span></div>
+  <div class="stat"><b class="ok">18</b><span>merged</span></div>
+  <div class="stat"><b>28</b><span>PRs (23 merged)</span></div>
+  <div class="stat"><b>84</b><span>agent runs</span></div>
+  <div class="stat"><b>62</b><span>commits</span></div>
+  <div class="stat"><b>200</b><span>tests green</span></div>
+  <div class="stat"><b>$9.80</b><span>shadow spend</span></div>
   <div class="stat"><b class="ok">0</b><span>blocked</span></div>
 </div>
 
@@ -257,6 +257,14 @@
 <p><span class="lbl">Lesson</span> A guard that checks "is anything running" at startup only prevents races it happens to see; put the lock where the work starts, not where the scheduler decides. On one engine, one build — globally.</p>
 </div>
 
+<div class="incident">
+<h4>P17 · Three PRs opened on top of failing test suites <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> The first petro-tools PRs (#15, #16, #17) passed every local gate, opened, and then failed CI's <code>e2e</code> — on the agent's <em>own</em> test files. #15: 5 failures + 1 error of 6; #16: 2 of 15; #17: 8 of 21. The suites never passed on any platform.</p>
+<p><span class="lbl">Root cause</span> The pre-PR gates checked the diff's <em>shape</em> (empty, junk, secrets, blast radius) but never <em>ran</em> anything. The agent's <code>finish()</code> is a claim, and the claim was false: it wrote tests and an implementation that disagreed, and nothing between the last edit and <code>git push</code> noticed.</p>
+<p><span class="lbl">Fix</span> A <b>test gate</b>: <code>gates.run_tests()</code> executes the repo's configured <code>gates.test_command</code> in the worktree (with the agent's env overlay, so the pinned venv is used) before a PR opens. Failure = retry with the last 1,500 chars of output injected into the next attempt's "Previous failure" prompt; exhausted retries escalate. All three PRs were closed and their tickets re-queued with the exact assertion failures as context.</p>
+<p><span class="lbl">Lesson</span> CI caught all three — the layered chain worked — but catching a false claim at CI costs a branch, a PR, and a human's glance. Run the cheapest decisive check at the cheapest point. And the flagged weak point ("the agent writes the tests its own code is judged by") is now mechanically bounded: the tests may be wrong, but they can no longer be <em>red</em>.</p>
+</div>
+
 <h3>Agent behavior</h3>
 
 <div class="incident">
@@ -287,6 +295,14 @@
 <p><span class="lbl">Root cause</span> On long agent histories (mid-conversation, once the model must actually produce the module), this Qwen reasoning build falls into a thinking loop — it never reaches the answer. The old 1600 cap had been <em>hiding</em> it: truncating the thinking sometimes forced early action (which is also why it could never write files). A fresh-prompt A/B showed all variants fine — the loop only reproduces mid-conversation, so the probe had to replay the real transcript history against the engine.</p>
 <p><span class="lbl">Fix</span> Measured replay at the exact loop point: baseline 6000 tok / no call; <code>reasoning_effort=low</code> 6000 tok / no call (not honored); <code>chat_template_kwargs: {enable_thinking: false}</code> → <b>1118 tokens, a clean <code>write_file</code></b>. New knob <code>LLM_DISABLE_THINKING=1</code> (per-tier env, default off), set for both petro tiers.</p>
 <p><span class="lbl">Lesson</span> A step that ends at exactly the output cap with no tool call is a loop signature — the no-call transcript line made it visible in one look. And knob experiments must replay the failure context: at step 1 every variant looks healthy.</p>
+</div>
+
+<div class="incident">
+<h4>A5 · With thinking off, the agent wandered instead of looping <span class="tag agent">agent</span></h4>
+<p><span class="lbl">Symptom</span> After the thinking-off fix, one run spent all 32 steps searching the word "grade" across every file glob in the repo — <code>**/*.md</code>, <code>**/*.json</code>, <code>**/*.yaml</code> — and never edited anything. $0.08, zero files. The duplicate-call guard was evaded by varying the glob each time.</p>
+<p><span class="lbl">Root cause</span> Explore-instead-of-edit (A1) in a new costume: nothing in the harness ever told the agent that reading forever is a failure. The no-call nudge only fires when a step makes no call — a search makes a call.</p>
+<p><span class="lbl">Fix</span> A <b>wander breaker</b> in the agent loop: after <code>LLM_WANDER_LIMIT</code> (default 8) consecutive steps that change no file, the harness injects "STOP EXPLORING — next reply must be write_file/append_file/edit_file or finish", repeated every 4 steps. First run under it: 8 orientation steps, then a write at step 9 and 23 steps of real work.</p>
+<p><span class="lbl">Lesson</span> Nudge on <em>outcomes</em> (files changed), not on message shape (tool calls made). A stream of plausible reads is indistinguishable from progress until you count what it produced.</p>
 </div>
 
 <h3>Ticket specs — the real ceiling</h3>
