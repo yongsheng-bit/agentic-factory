@@ -72,10 +72,10 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 22:57 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 23:09 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
-  <div class="stat"><b>22</b><span>tickets</span></div>
+  <div class="stat"><b>36</b><span>tickets (2 repos)</span></div>
   <div class="stat"><b class="ok">18</b><span>merged</span></div>
   <div class="stat"><b>28</b><span>PRs (23 merged)</span></div>
   <div class="stat"><b>84</b><span>agent runs</span></div>
@@ -320,6 +320,14 @@
 <p><span class="lbl">Symptom</span> Ticket 19 failed 3 attempts even after the A1/T1 fixes.</p>
 <p><span class="lbl">Root cause</span> My ticket body asserted an upper bound on a <code>started_at &gt;=</code> sum — mathematically impossible — and the test was redundant with ticket 18's boundary test anyway. The agent thrashed against an unsatisfiable spec.</p>
 <p><span class="lbl">Fix</span> Closed as spec bug with the reason recorded. Rule added to the skill: <b>hand-solve a ticket on one line before queueing it</b>; if the spec has no passing solution, no tier can find one.</p>
+</div>
+
+<div class="incident">
+<h4>T3 · The first customer ticket referenced a module its dependency would write <span class="tag spec">spec</span></h4>
+<p><span class="lbl">Symptom</span> petro-tools ticket 1 (audit) escalated after 3 attempts. Its body said "resolve blocks with the SAME <code>petro.dips.resolve_blocks</code> the filler uses" — a function ticket 6 was supposed to create. Filing order was not build order, and the queue drains by id.</p>
+<p><span class="lbl">Root cause</span> The backlog was filed as a list of features, not a dependency graph. The agent dutifully improvised <code>resolve_blocks</code> inside <code>dips.py</code>, hit the openpyxl trap the real spec handles (synthetic workbooks store dates as <code>=A5+1</code> formulas with <b>no cached values</b>, so <code>data_only=True</code> reads <code>None</code> — the chain must be resolved arithmetically from the anchor), and failed the same assertion three times.</p>
+<p><span class="lbl">Fix</span> A <code>seq</code> column on tickets: <code>claim_next</code> orders by <code>seq, id</code>, and the petro backlog was reordered into dependency order (parsers → csvio → scan → shifts → dips → audit → docs). Ticket 6's spec already contained the formula-chain knowledge — the lesson is to file the dependency before the dependent, not to restate the dependency's contract in every ticket.</p>
+<p><span class="lbl">Lesson</span> A queue is a build system the moment tickets reference each other's modules. Filing order is a coincidence; dependency order is a fact — store it.</p>
 </div>
 
 <h2>Shipped ledger</h2>
