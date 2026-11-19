@@ -55,6 +55,7 @@
   .tag.pipe { color: var(--accent); border-color: var(--accent); }
   .tag.agent { color: var(--amber); border-color: var(--amber); }
   .tag.spec { color: var(--purple); border-color: var(--purple); }
+  .tag.infra { color: var(--green); border-color: var(--green); }
   .pipeline { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; margin: 1rem 0; }
   .pipeline .step { background: var(--panel); border: 1px solid var(--border);
                     border-radius: 6px; padding: .45rem .7rem; font-size: .85rem; }
@@ -72,7 +73,7 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-18 23:09 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-19 08:20 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
   <div class="stat"><b>36</b><span>tickets (2 repos)</span></div>
@@ -90,7 +91,7 @@
 <ol>
   <li>After each batch or incident: add an incident card (symptom → root cause → fix → lesson), update the ledger, stats, and the <em>Last updated</em> stamp.</li>
   <li>Numbers come from the tools, never from memory: tickets/runs from <code>factory.db</code>, PRs from <code>gh pr list --state all</code>, commits from <code>git log</code>.</li>
-  <li>Incidents are grouped by category — <span class="tag sec">sandbox</span> <span class="tag pipe">pipeline</span> <span class="tag agent">agent behavior</span> <span class="tag spec">ticket spec</span> — and numbered so they can be referenced (S1, P3, A1, T2…).</li>
+  <li>Incidents are grouped by category — <span class="tag sec">sandbox</span> <span class="tag pipe">pipeline</span> <span class="tag agent">agent behavior</span> <span class="tag spec">ticket spec</span> <span class="tag infra">infrastructure</span> — and numbered so they can be referenced (S1, P3, A1, T2…).</li>
   <li>Commit message convention: <code>docs: build log — &lt;what changed&gt;</code>.</li>
 </ol>
 
@@ -303,6 +304,14 @@
 <p><span class="lbl">Root cause</span> Explore-instead-of-edit (A1) in a new costume: nothing in the harness ever told the agent that reading forever is a failure. The no-call nudge only fires when a step makes no call — a search makes a call.</p>
 <p><span class="lbl">Fix</span> A <b>wander breaker</b> in the agent loop: after <code>LLM_WANDER_LIMIT</code> (default 8) consecutive steps that change no file, the harness injects "STOP EXPLORING — next reply must be write_file/append_file/edit_file or finish", repeated every 4 steps. First run under it: 8 orientation steps, then a write at step 9 and 23 steps of real work.</p>
 <p><span class="lbl">Lesson</span> Nudge on <em>outcomes</em> (files changed), not on message shape (tool calls made). A stream of plausible reads is indistinguishable from progress until you count what it produced.</p>
+</div>
+
+<div class="incident">
+<h4>A6 · An overnight engine outage spent retries like agent failures <span class="tag infra">infra</span></h4>
+<p><span class="lbl">Symptom</span> Three tickets burned 3+1 attempts between 23:20 and 23:58, each attempt exactly 76 seconds and exactly $0.0000. Two escalated. The run details were identical: <code>WinError 10060</code> — the engine host was unreachable (it fell asleep mid-evening).</p>
+<p><span class="lbl">Root cause</span> The runner prints <code>{"status": "error"}</code> and exits 1 when the LLM is unreachable; the worker saw a non-zero exit, called it "fail", and consumed a retry. Retries are the budget for <em>agent</em> mistakes — infrastructure downtime drained it in four minutes flat.</p>
+<p><span class="lbl">Fix</span> <code>agent.run</code> now sniffs the runner's inner JSON status: an inner <code>error</code> surfaces as outer <code>error</code>, and the worker re-queues the ticket untouched — "deferred (engine unreachable)", no attempt burned, no failure injected into the next prompt. The three damaged tickets were reset; the outage had cost them nothing.</p>
+<p><span class="lbl">Lesson</span> Every retry must answer "did the <em>agent</em> fail?" — anything else (engine down, network, disk) is a pause, not a strike. A queue that confuses downtime with incompetence escalates tickets that never made a single LLM call.</p>
 </div>
 
 <h3>Ticket specs — the real ceiling</h3>
