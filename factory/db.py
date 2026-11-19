@@ -90,7 +90,8 @@ def init(con: sqlite3.Connection) -> None:
                          ("issue_number", "INTEGER"),
                          ("issue_node", "TEXT"),
                          ("project_item", "TEXT"),
-                         ("issue_state", "TEXT")):
+                         ("issue_state", "TEXT"),
+                         ("seq", "INTEGER DEFAULT 0")):
         if col not in have:
             con.execute(f"ALTER TABLE tickets ADD COLUMN {col} {coltype}")
 
@@ -140,11 +141,15 @@ def list_runs(con, ticket_id=None, limit=20):
 
 
 def claim_next(con, worker_id="w0"):
-    """Atomically move the oldest queued ticket to running. Returns row or None."""
+    """Atomically move the next queued ticket to running. Returns row or None.
+
+    Build order is dependency order, not filing order: seq (default 0, ties by
+    id) lets a repo's backlog state what must be built before what.
+    """
     con.execute("BEGIN IMMEDIATE")
     try:
         row = con.execute(
-            "SELECT * FROM tickets WHERE status='queued' ORDER BY id LIMIT 1"
+            "SELECT * FROM tickets WHERE status='queued' ORDER BY seq, id LIMIT 1"
         ).fetchone()
         if row is None:
             con.execute("COMMIT")

@@ -136,6 +136,17 @@ class TestQueue(unittest.TestCase):
         dbmod.log_failure(con, tid, "tests failing:\nFAILED tests/test_x.py")
         self.assertIn("FAILED tests/test_x.py", dbmod.last_failure(con, tid))
 
+    def test_claim_next_respects_seq(self):
+        con = fresh_db(self)
+        late = dbmod.add_ticket(con, "filed first, depends on other work")
+        first = dbmod.add_ticket(con, "dependency, filed later")
+        con.execute("UPDATE tickets SET seq=1 WHERE id=?", (late,))
+        con.execute("UPDATE tickets SET seq=0 WHERE id=?", (first,))
+        con.commit()
+        row = dbmod.claim_next(con)
+        self.assertIsNotNone(row)
+        self.assertEqual(row["id"], first)
+
     def test_watchdog_reaps_stale_runs(self):
         con = fresh_db(self)
         tid = dbmod.add_ticket(con, "orphan")
