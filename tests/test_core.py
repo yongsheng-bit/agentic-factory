@@ -1656,6 +1656,21 @@ class TestBoardIssueNode(unittest.TestCase):
                          "I_ABC42")
 
 
+class TestRunTestsGate(unittest.TestCase):
+    def test_pass_fail_and_timeout(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        ok, out = gates.run_tests(d, f'"{sys.executable}" -c "print(1)"')
+        self.assertTrue(ok)
+        self.assertIn("1", out)
+        ok, out = gates.run_tests(d, f'"{sys.executable}" -c "import sys; sys.exit(3)"')
+        self.assertFalse(ok)
+        ok, out = gates.run_tests(
+            d, f'"{sys.executable}" -c "import time; time.sleep(30)"', timeout_s=1)
+        self.assertFalse(ok)
+        self.assertIn("timed out", out)
+
+
 class TestChatBody(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

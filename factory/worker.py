@@ -186,6 +186,20 @@ def _process_once(cfg, con, dry=False):
                              f"SECRET FOUND {f.get('file')}:{f.get('line')} "
                              f"({f.get('reason')}) - PR blocked")
 
+        test_cmd = (cfg.get("gates") or {}).get("test_command")
+        if test_cmd:
+            ok, out = gates.run_tests(
+                path, test_cmd,
+                env=agentmod.minimal_env(
+                    env_extra=(cfg.get("agent") or {}).get("env")))
+            if not ok:
+                why = "tests failing:\n" + out[-1500:]
+                dbmod.bump_attempt(con, ticket["id"])
+                if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
+                    return _escalate(con, ticket, cfg, why)
+                dbmod.finish(con, ticket["id"], "queued", detail=why)
+                return "retry (tests failing)"
+
 
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
         if nfiles == 0 or not diff_text.strip():

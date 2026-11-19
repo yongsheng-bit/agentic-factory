@@ -36,6 +36,22 @@ def _which(cmd):
     return shutil.which(cmd)
 
 
+def run_tests(workdir, command, env=None, timeout_s=600):
+    """Run the repo's own test suite against the worktree before a PR opens.
+
+    The agent's finish() is a claim; the suite is evidence. A PR whose tests
+    fail wastes exactly the human attention the gates exist to conserve -
+    measured: the first petro PR shipped six tests that never passed, on any
+    platform. Returns (ok, output).
+    """
+    try:
+        proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
+                              capture_output=True, text=True, timeout=timeout_s)
+        return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+    except subprocess.TimeoutExpired:
+        return False, f"test command timed out after {timeout_s}s"
+
+
 def added_lines(diff):
     """Yield (file, line_no, text) for every line a unified diff ADDS.
 
