@@ -75,9 +75,45 @@ def _safe_branch(ref, ticket_id):
     return f"agent/{slug or 'ticket'}-{ticket_id}"[:100]
 
 
+def _resolve_base(root, base):
+    """Resolve the worktree base against the REMOTE, after fetching.
+
+    Branching from a stale local HEAD made every ticket re-implement the
+    modules its dependencies had already merged on GitHub, so each PR
+    conflicted with code already on main. A failed fetch (offline) falls
+    back to the caller's base rather than blocking the build.
+    """
+    try:
+        _git(["fetch", "--quiet", "origin"], cwd=root)
+    except WorktreeError:
+        return base
+    name = base
+    if base == "HEAD":
+        name = None
+        try:
+            ref = _git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                       cwd=root).strip()
+            name = ref.rsplit("/", 1)[-1]
+        except WorktreeError:
+            try:
+                name = _git(["rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=root).strip()
+            except WorktreeError:
+                return base
+    if name:
+        try:
+            _git(["rev-parse", "--verify", "--quiet", f"origin/{name}"],
+                 cwd=root)
+            return f"origin/{name}"
+        except WorktreeError:
+            pass
+    return base
+
+
 def create(root, ticket_id, ref=None, base="HEAD"):
     """Create an isolated worktree + branch for one ticket. Returns (path, branch)."""
     root = repo_root(root)
+    base = _resolve_base(root, base)
     wt_root = ensure_worktrees_dir(root)
     branch = _safe_branch(ref, ticket_id)
     path = os.path.join(wt_root, os.path.basename(branch.replace("/", "_")))

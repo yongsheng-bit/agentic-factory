@@ -1974,5 +1974,40 @@ class TestEngineLock(unittest.TestCase):
             workermod._release_engine_lock(held)
 
 
+class TestWorktreeBase(unittest.TestCase):
+    def _git(self, args, cwd):
+        import subprocess
+        subprocess.run(["git"] + args, cwd=cwd, check=True,
+                       capture_output=True)
+
+    def test_create_branches_from_fetched_remote_tip(self):
+        import subprocess
+        d = tempfile.mkdtemp()
+        bare = os.path.join(d, "origin.git")
+        subprocess.run(["git", "init", "--bare", "--initial-branch=main",
+                        bare], check=True, capture_output=True)
+        work = os.path.join(d, "work")
+        self._git(["clone", bare, work], cwd=d)
+        self._git(["config", "user.email", "t@t"], cwd=work)
+        self._git(["config", "user.name", "t"], cwd=work)
+        with open(os.path.join(work, "f.txt"), "w", encoding="utf-8") as fh:
+            fh.write("A")
+        self._git(["add", "f.txt"], cwd=work)
+        self._git(["commit", "-m", "A"], cwd=work)
+        self._git(["push", "-u", "origin", "HEAD:main"], cwd=work)
+        root = os.path.join(d, "root")
+        self._git(["clone", bare, root], cwd=d)
+        with open(os.path.join(work, "f.txt"), "w", encoding="utf-8") as fh:
+            fh.write("B")
+        self._git(["commit", "-am", "B"], cwd=work)
+        self._git(["push", "origin", "HEAD:main"], cwd=work)
+        path, branch = worktree.create(root, 999)
+        try:
+            with open(os.path.join(path, "f.txt"), encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "B")
+        finally:
+            worktree.remove(root, path, branch=branch)
+
+
 if __name__ == "__main__":
     unittest.main()
