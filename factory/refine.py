@@ -44,9 +44,21 @@ def _mentioned_elsewhere(sym, sibling_texts):
     return any(attr in text for text in sibling_texts)
 
 
+STDLIB_ROOTS = {"os", "sys", "re", "json", "csv", "io", "time", "math",
+                "datetime", "pathlib", "collections", "difflib", "urllib",
+                "subprocess", "shutil", "tempfile", "unittest", "typing"}
+
+
 def symbol_problems(repo_dir, body, sibling_texts):
     """Backticked dotted names and files in the ticket must exist in the
-    repo, or be named by a sibling ticket that creates them (T3)."""
+    repo, or be named by a sibling ticket that creates them (T3).
+
+    Only module paths of three or more parts are checked, and stdlib roots
+    are exempt: two-part names are attribute calls on local or third-party
+    objects, and `page.get_text()` (PyMuPDF) was flagged as a missing repo
+    module on ticket 8. The T3 class this gate exists for always spells
+    the full module path (`petro.dips.resolve_blocks`).
+    """
     problems = []
     for sym in symbols(body):
         if sym.endswith(".py") or "/" in sym:
@@ -56,6 +68,8 @@ def symbol_problems(repo_dir, body, sibling_texts):
                     problems.append(f"file `{sym}` does not exist in the repo")
             continue
         parts = sym.split(".")
+        if len(parts) < 3 or parts[0] in STDLIB_ROOTS:
+            continue
         stem = os.path.join(repo_dir, *parts[:-1])
         target = stem + ".py" if os.path.exists(stem + ".py") else (
             os.path.join(stem, "__init__.py")

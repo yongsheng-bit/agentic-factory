@@ -377,6 +377,12 @@ class TestRefinement(unittest.TestCase):
                 self.dir, "call `petro.dips.missing_fn`",
                 ["create missing_fn in dips"]), [])
 
+    def test_third_party_and_stdlib_attribute_calls_are_exempt(self):
+        self.assertEqual(
+            refinemod.symbol_problems(
+                self.dir, "extract with `page.get_text()` and "
+                "`os.path.exists` and `re.compile`", []), [])
+
     def test_missing_file_is_a_problem(self):
         problems = refinemod.symbol_problems(
             self.dir, "edit `petro/ghost.py`", [])
