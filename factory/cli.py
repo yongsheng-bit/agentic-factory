@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -282,6 +283,34 @@ def cmd_import_issues(args):
         print(f"no open issues labelled '{args.label}' in {slug}")
 
 
+def cmd_canary(args):
+    """Run the merged parser against real receipts vs the ground-truth CSV.
+
+    Executes factory/canary.py under the configured venv python (the one
+    with pymupdf) so the factory's own interpreter needs no third-party
+    imports. Exit code is the canary's: 0 pass, 1 fail, 2 setup problem.
+    """
+    cfg, _ = _open(args)
+    can = cfg.get("canary") or {}
+    py = args.python or can.get("python")
+    data = args.data or can.get("data")
+    truth = args.truth or can.get("truth")
+    repo = args.repo or cfg["repo"]
+    if not (py and data and truth):
+        print("canary needs config {python, data, truth} or the matching "
+              "flags (see factory/canary.py docstring)")
+        sys.exit(2)
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "canary.py")
+    proc = subprocess.run([py, script, "--repo", repo, "--data", data,
+                           "--truth", truth],
+                          capture_output=True, text=True)
+    print(proc.stdout, end="")
+    if proc.stderr:
+        print(proc.stderr, end="")
+    sys.exit(proc.returncode)
+
+
 def cmd_gate(args):
     cfg, _ = _open(args)
     root = args.path or cfg["repo"]
@@ -405,6 +434,10 @@ def build_parser():
                    help="print the column moves without touching GitHub")
     s.set_defaults(fn=cmd_board)
 
+    s = a.add_parser("canary")
+    s.add_argument("--repo"); s.add_argument("--data"); s.add_argument("--truth")
+    s.add_argument("--python")
+    s.set_defaults(fn=cmd_canary)
     s = a.add_parser("gate"); s.add_argument("--path"); s.set_defaults(fn=cmd_gate)
     s = a.add_parser("blast"); s.add_argument("--path"); s.set_defaults(fn=cmd_blast)
     a.add_parser("version").set_defaults(fn=cmd_version)

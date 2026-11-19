@@ -15,6 +15,7 @@ from factory import blast as blastmod
 from factory import cli as climod
 from factory import db as dbmod
 from factory import gates
+from factory import mutate as mutatemod
 from factory import refine as refinemod
 from factory import review as reviewmod
 from factory import sync as syncmod
@@ -383,6 +384,13 @@ class TestRefinement(unittest.TestCase):
                 self.dir, "extract with `page.get_text()` and "
                 "`os.path.exists` and `re.compile`", []), [])
 
+    def test_candidates_restricted_to_wanted_lines(self):
+        src = "a = x > y\nb = x > y\n"
+        self.assertEqual(len(mutatemod.candidates(src, {1})), 1)
+        self.assertEqual(len(mutatemod.candidates(src, {2})), 1)
+        self.assertEqual(mutatemod.candidates(src, set()), [])
+
+
     def test_missing_file_is_a_problem(self):
         problems = refinemod.symbol_problems(
             self.dir, "edit `petro/ghost.py`", [])
@@ -406,6 +414,64 @@ class TestRefinement(unittest.TestCase):
         self.assertTrue(ok, msg)
         self.assertEqual(dbmod.get_ticket(con, tid)["status"], "queued")
 
+
+class TestMutationGate(unittest.TestCase):
+    DIFF = ("--- a/m.py\n+++ b/m.py\n@@ -0,0 +1,2 @@\n"
+            "+def bound(x):\n+    return x >= 1 and x <= 9\n")
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        with open(os.path.join(self.dir, "m.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("def bound(x):\n    return x >= 1 and x <= 9\n")
+        os.makedirs(os.path.join(self.dir, "tests"))
+        self.env = dict(os.environ, PYTHONPATH=self.dir)
+        self.cmd = f'"{sys.executable}" -m unittest discover -s tests'
+
+    def _suite(self, name, body):
+        path = os.path.join(self.dir, "tests", name)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def test_weak_suite_fails_the_gate(self):
+        self._suite("test_trivial.py",
+                    "import unittest\n"
+                    "class T(unittest.TestCase):\n"
+                    "    def test_t(self):\n        self.assertTrue(True)\n")
+        ok, report = mutatemod.run_mutations(
+            self.dir, self.DIFF, self.cmd, env=self.env)
+        self.assertFalse(ok)
+        self.assertIn("0/5", report)
+
+    def test_strong_suite_kills_every_mutant(self):
+        self._suite("test_bound.py",
+                    "import unittest\nimport m\n"
+                    "class T(unittest.TestCase):\n"
+                    "    def test_edges(self):\n"
+                    "        self.assertTrue(m.bound(1))\n"
+                    "        self.assertTrue(m.bound(9))\n"
+                    "        self.assertFalse(m.bound(0))\n"
+                    "        self.assertFalse(m.bound(10))\n")
+        ok, report = mutatemod.run_mutations(
+            self.dir, self.DIFF, self.cmd, env=self.env)
+        self.assertTrue(ok)
+        self.assertIn("5/5", report)
+
+    def test_no_candidates_passes_with_note(self):
+        with open(os.path.join(self.dir, "m.py"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("def bound(x):\n    return x\n")
+        ok, report = mutatemod.run_mutations(
+            self.dir, "--- a/m.py\n+++ b/m.py\n@@ -0,0 +1,2 @@\n"
+            "+def bound(x):\n+    return x\n", self.cmd, env=self.env)
+        self.assertTrue(ok)
+        self.assertIn("skipped", report)
+
+    def test_max_mutants_caps_the_plan(self):
+        def read(rel):
+            return "def bound(x):\n    return x >= 1 and x <= 9\n"
+        p = mutatemod.plan(self.DIFF, read, max_mutants=2)
+        self.assertEqual(len(p), 2)
 
 class TestSecretGate(unittest.TestCase):
     def setUp(self):

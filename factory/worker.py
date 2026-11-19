@@ -14,7 +14,7 @@ import time
 from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
-from . import gates, notify, refine as refinemod, review as reviewmod, worktree as wt
+from . import gates, mutate, notify, refine as refinemod, review as reviewmod, worktree as wt
 
 try:
     import msvcrt
@@ -214,6 +214,23 @@ def _process_once(cfg, con, dry=False):
                 dbmod.finish(con, ticket["id"], "queued")
                 return "retry (tests failing)"
 
+        mut_report = ""
+        mut_cfg = (cfg.get("gates") or {}).get("mutation") or {}
+        if test_cmd and mut_cfg.get("enabled"):
+            mut_ok, mut_report = mutate.run_mutations(
+                path, diff_text, test_cmd,
+                env=agentmod.minimal_env(
+                    env_extra=(cfg.get("agent") or {}).get("env")),
+                max_mutants=int(mut_cfg.get("max_mutants", 12)),
+                min_score=float(mut_cfg.get("min_score", 0.5)))
+            if not mut_ok:
+                dbmod.bump_attempt(con, ticket["id"])
+                if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
+                    return _escalate(con, ticket, cfg, mut_report)
+                dbmod.log_failure(con, ticket["id"], mut_report)
+                dbmod.finish(con, ticket["id"], "queued")
+                return "retry (tests do not constrain the code)"
+
 
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
         if nfiles == 0 or not diff_text.strip():
@@ -232,6 +249,8 @@ def _process_once(cfg, con, dry=False):
                 f"tier: {tier}  attempt: {attempt}  "
                 f"cost: ${dbmod.ticket_spend(con, ticket['id']):.4f}\n"
                 f"gate: {'; '.join(gate['tools'])} clean\n")
+        if mut_report:
+            body += "\n" + mut_report + "\n"
         if ticket["issue_number"]:
             body += f"\nCloses #{ticket['issue_number']}\n"
 
