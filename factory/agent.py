@@ -204,6 +204,28 @@ def _extract_cost(stdout_text, spec):
     return est, tin, tout
 
 
+def _inner_status(stdout_text):
+    """The runner's own status field from its final JSON line, if present.
+
+    A non-zero exit means the attempt failed, but not whose fault it is:
+    status "error" from the runner means the engine was unreachable, which
+    is infrastructure downtime, not an agent failure, and must not consume
+    a retry attempt (an overnight engine outage escalated two tickets that
+    never made a single LLM call).
+    """
+    text = (stdout_text or "").strip()
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                blob = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(blob, dict):
+                return blob.get("status")
+    return None
+
+
 ENV_ALLOWLIST = (
     "PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT", "WINDIR", "TEMP", "TMP",
     "TMPDIR", "HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "LANG", "LC_ALL",
@@ -293,6 +315,8 @@ def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=
                 "seconds": time.time() - t0, "pid": proc.pid}
 
     cost, tin, tout = _extract_cost(out or "", spec)
+    if status == "fail" and _inner_status(out or "") == "error":
+        status = "error"
     return {"status": status, "cost_usd": cost, "tokens_in": tin, "tokens_out": tout,
             "stdout": (out or "")[-8000:], "stderr": (err or "")[-4000:],
             "seconds": time.time() - t0, "pid": proc.pid}

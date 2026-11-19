@@ -248,6 +248,28 @@ class TestAgent(unittest.TestCase):
         self.assertEqual(res["status"], "blocked")
         self.assertEqual(res["cost_usd"], 0.0)
 
+    def test_runner_error_status_surfaces_as_error(self):
+        import sys
+        code = ("import sys, json; "
+                "print(json.dumps({'status': 'error', 'error': 'unreachable'})); "
+                "sys.exit(1)")
+        res = agentmod.run({}, {"command": [sys.executable, "-c", code],
+                                "timeout_s": 30}, "p", ".", prompt_path="p")
+        self.assertEqual(res["status"], "error")
+
+    def test_runner_completed_status_stays_fail_on_bad_exit(self):
+        import sys
+        code = ("import sys, json; "
+                "print(json.dumps({'status': 'fail'})); sys.exit(1)")
+        res = agentmod.run({}, {"command": [sys.executable, "-c", code],
+                                "timeout_s": 30}, "p", ".", prompt_path="p")
+        self.assertEqual(res["status"], "fail")
+
+    def test_inner_status_ignores_non_json_output(self):
+        self.assertIsNone(agentmod._inner_status("traceback...\nnot json"))
+        self.assertEqual(agentmod._inner_status('noise\n{"status": "budget"}'),
+                         "budget")
+
 
 class TestSecretGate(unittest.TestCase):
     def setUp(self):

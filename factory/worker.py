@@ -142,6 +142,10 @@ def _process_once(cfg, con, dry=False):
               f"status={res['status']} cost=${res.get('cost_usd', 0.0):.4f} "
               f"{res['seconds']:.0f}s", flush=True)
 
+        if res["status"] == "error":
+            dbmod.finish(con, ticket["id"], "queued")
+            return "deferred (engine unreachable)"
+
         if res["status"] != "ok":
             dbmod.bump_attempt(con, ticket["id"])
             if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):
