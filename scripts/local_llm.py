@@ -47,6 +47,7 @@ MAX_TOTAL_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "600000"))
 MAX_CONTEXT_TOKENS = int(os.environ.get("LLM_MAX_CONTEXT", "100000"))
 TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "240"))
 STEP_MAX_TOKENS = int(os.environ.get("LLM_STEP_MAX_TOKENS", "6000"))
+DISABLE_THINKING = os.environ.get("LLM_DISABLE_THINKING", "") == "1"
 TEMPERATURE = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
 MAX_TOOL_CHARS = 6000
 MAX_FILES_LISTED = 200
@@ -416,6 +417,24 @@ DISPATCH = {"read_file": t_read, "write_file": t_write, "edit_file": t_edit,
 
 
 
+def chat_body(messages):
+    """The request payload for one step.
+
+    Thinking is switchable per deployment because of a measured failure:
+    on long agent histories this reasoning model loops - it fills the whole
+    output with thinking tokens and never reaches the answer or the tool
+    call. The loop only appears mid-conversation, so reproduce it by
+    replaying the history; disabling thinking turns the looped step into a
+    prompt write_file.
+    """
+    body = {"model": MODEL, "messages": messages, "tools": TOOLS,
+            "tool_choice": "auto", "temperature": TEMPERATURE,
+            "max_tokens": STEP_MAX_TOKENS}
+    if DISABLE_THINKING:
+        body["chat_template_kwargs"] = {"enable_thinking": False}
+    return body
+
+
 def chat(messages, attempts=3):
     """One completion, with a per-step output cap.
 
@@ -424,9 +443,7 @@ def chat(messages, attempts=3):
     truncated before it closed, and the step came back as prose with no call -
     so an agent could never create a new file, only nudge-edit small ones.
     """
-    body = json.dumps({"model": MODEL, "messages": messages, "tools": TOOLS,
-                       "tool_choice": "auto", "temperature": TEMPERATURE,
-                       "max_tokens": STEP_MAX_TOKENS}).encode()
+    body = json.dumps(chat_body(messages)).encode()
     last = None
     for i in range(attempts):
         try:

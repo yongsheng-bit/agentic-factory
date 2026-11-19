@@ -1656,6 +1656,27 @@ class TestBoardIssueNode(unittest.TestCase):
                          "I_ABC42")
 
 
+class TestChatBody(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "localllm", os.path.join(os.path.dirname(__file__), "..",
+                                     "scripts", "local_llm.py"))
+        cls.llm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.llm)
+
+    def test_step_cap_and_thinking_default_off_in_body(self):
+        body = self.llm.chat_body([{"role": "user", "content": "x"}])
+        self.assertEqual(body["max_tokens"], self.llm.STEP_MAX_TOKENS)
+        self.assertNotIn("chat_template_kwargs", body)
+
+    def test_disable_thinking_adds_template_kwargs(self):
+        with patch.object(self.llm, "DISABLE_THINKING", True):
+            body = self.llm.chat_body([{"role": "user", "content": "x"}])
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+
+
 class TestEngineLock(unittest.TestCase):
     def setUp(self):
         fd, self.path = tempfile.mkstemp(suffix=".lock")
