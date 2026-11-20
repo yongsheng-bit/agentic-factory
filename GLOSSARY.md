@@ -39,6 +39,9 @@ first — do not fork synonyms in code.
 - **Fail-closed gate** — a required check that is *missing* counts as
   misconfiguration, not as passing. An absent test command pauses the
   queue; it never becomes a green run.
+- **Not proven** — the PR-body section stating, at open time, which
+  gates did *not* run on the diff (tests, mutation, preview, review).
+  A reviewer never guesses whether green meant "passed" or "absent".
 - **Escalation** — a ticket the cheap tier could not finish within its
   budget or retry allowance; it waits for a human, not another model.
 - **Canary** — a known-good ticket replayed to prove the pipeline

@@ -70,6 +70,29 @@ def _release_engine_lock(fh):
     fh.close()
 
 
+def not_proven_lines(test_ran, mutation_ran, preview_enabled, review_ok):
+    """What this PR does NOT prove, stated at open time (never after).
+
+    Every line names a gate that did not run on this diff, so a reviewer
+    never has to guess whether green meant "passed" or "absent".
+    """
+    lines = []
+    if not test_ran:
+        lines.append("test suite did NOT run on this diff "
+                     "(gates.test_command not configured)")
+    if not mutation_ran:
+        lines.append("mutation gate disabled - passing tests do not prove "
+                     "they constrain the changed code")
+    if not preview_enabled:
+        lines.append("GUI preview disabled - rendered pages unverified")
+    if not review_ok:
+        lines.append("independent AI review unavailable")
+    if preview_enabled:
+        lines.append("GUI preview is generated after this PR opens; "
+                     "no preview comment means it failed")
+    return lines
+
+
 def process_once(cfg, con, dry=False):
     """Handle at most one ticket under the engine lock. Returns an outcome."""
     lock = _engine_lock()
@@ -268,12 +291,21 @@ def _process_once(cfg, con, dry=False):
             cfg=cfg.get("blast"))
         dbmod.set_blast(con, ticket["id"], level, reason, branch=branch)
 
+        verdict, notes = reviewmod.review_diff(cfg, ticket, diff_text)
+
         body = (f"{ticket['body']}\n\n---\n"
                 f"blast radius: **{level}** ({reason})\n"
                 f"files: {nfiles}  +{added} -{deleted}\n"
                 f"tier: {tier}  attempt: {attempt}  "
                 f"cost: ${dbmod.ticket_spend(con, ticket['id']):.4f}\n"
                 f"gate: {'; '.join(gate['tools'])} clean\n")
+        np_lines = not_proven_lines(
+            test_ran=bool(test_cmd),
+            mutation_ran=bool(mut_report),
+            preview_enabled=bool((cfg.get("preview") or {}).get("enabled")),
+            review_ok=bool(verdict))
+        body += ("\n## Not proven\n"
+                 + "\n".join(f"- {x}" for x in np_lines) + "\n")
         if mut_report:
             body += "\n" + mut_report + "\n"
         decisions = agentmod.extract_decisions(res.get("stdout", ""))
@@ -283,7 +315,6 @@ def _process_once(cfg, con, dry=False):
         if ticket["issue_number"]:
             body += f"\nCloses #{ticket['issue_number']}\n"
 
-        verdict, notes = reviewmod.review_diff(cfg, ticket, diff_text)
         if verdict:
             body += f"\nAI review: **{verdict}** — {notes}\n"
         else:
