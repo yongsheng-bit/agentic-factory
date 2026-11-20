@@ -1,9 +1,14 @@
 """Factory retro: one markdown digest of what the factory did and who it waits on.
 
-Two questions, answered from the board DBs alone (no network, no gh):
-what happened in the window, and what is waiting on a human right now.
-Cost comes from the runs table, failure classes from run details, the
-human queue from ticket status plus open escalations.
+Three questions, answered from the board DBs alone (no network, no gh):
+what happened in the window, what is waiting on a human right now, and
+whether the factory is earning trust. Cost comes from the runs table,
+failure classes from run details, the human queue from ticket status
+plus open escalations, and the trust line from attempts and review
+state on merged tickets: first-pass rate measures autonomy (how often
+the agent gets it right uncorrected), the no-review merge rate measures
+automation (how much flows out without human eyes). Autonomy is built
+first; automation only rises as trust is earned.
 
 Usage:
     python scripts/retro.py --db dashboard.db [--db petro.db ...] [--days 7]
@@ -84,6 +89,24 @@ def failure_classes(con, days):
     return sorted(ranked, key=lambda c: (-c[1], c[0]))
 
 
+def trust_metrics(con, days):
+    rows = con.execute(
+        "select attempts, review_state from tickets"
+        " where status = 'merged' and merged_at >= ?",
+        (cutoff(days),)).fetchall()
+    merged = len(rows)
+    first_pass = sum(1 for r in rows if r["attempts"] == 1)
+    unreviewed = sum(1 for r in rows
+                     if (r["review_state"] or "") == "admin-bypass")
+    unknown = sum(1 for r in rows if not r["review_state"])
+    return {"merged": merged, "first_pass": first_pass,
+            "unreviewed": unreviewed, "unknown": unknown}
+
+
+def _pct(part, whole):
+    return round(100.0 * part / whole) if whole else 0
+
+
 def human_queue(con):
     marks = ",".join("?" * len(HUMAN_PENDING))
     tickets = con.execute(
@@ -112,6 +135,21 @@ def render_markdown(name, con, days):
             "%s $%.2f (%d runs)" % (t, u, n) for t, u, n in spend))
     else:
         lines.append("- spend: nothing spent in the window")
+    trust = trust_metrics(con, days)
+    if trust["merged"]:
+        trust_line = "- trust: %d merged — autonomy: first-pass %d%%" \
+                     " (%d/%d), automation: merged without review %d%%" \
+                     " (%d/%d)" % (
+                         trust["merged"],
+                         _pct(trust["first_pass"], trust["merged"]),
+                         trust["first_pass"], trust["merged"],
+                         _pct(trust["unreviewed"], trust["merged"]),
+                         trust["unreviewed"], trust["merged"])
+        if trust["unknown"]:
+            trust_line += ", review state unknown for %d" % trust["unknown"]
+        lines.append(trust_line)
+    else:
+        lines.append("- trust: nothing merged in the window")
     failures = failure_classes(con, days)
     if failures:
         lines.append("- failure classes:")
