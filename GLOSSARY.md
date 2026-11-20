@@ -39,6 +39,14 @@ first — do not fork synonyms in code.
 - **Fail-closed gate** — a required check that is *missing* counts as
   misconfiguration, not as passing. An absent test command pauses the
   queue; it never becomes a green run.
+- **Autonomy** — how often an agent reaches a reviewable PR without a
+  human correcting it. Measured as the first-pass rate: merged tickets
+  that succeeded on attempt one. Built first; it is the precondition
+  for automation.
+- **Automation** — how much ships without a human looking. Measured as
+  the no-review merge rate. It rises only as trust is earned; high
+  autonomy with low automation means the agent one-shots and the
+  operator still reads every line.
 - **Not proven** — the PR-body section stating, at open time, which
   gates did *not* run on the diff (tests, mutation, preview, review).
   A reviewer never guesses whether green meant "passed" or "absent".
