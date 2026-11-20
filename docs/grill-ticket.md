@@ -38,6 +38,11 @@ below; grill fully only for new subsystems or ambiguous UI work.
    cost more than one strong attempt.
 7. **Keep the diff promise.** One ticket, one surface. If the ticket
    touches two subsystems, split it — the blast gate will.
+8. **Done criteria are outcomes, never shapes.** Size, line length,
+   operator-per-line, layout and naming conventions are never done
+   criteria, even inside "Done when" — they belong to the repo's style,
+   and a model told to satisfy them will delete tests to do it. State
+   what must be true of the result, not what the code must look like.
 
 ## Done when
 

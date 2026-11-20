@@ -169,12 +169,70 @@ def write_prompt(workdir, ticket, attempt, extra="", criteria="", out_dir=None):
         f"- Do not commit, push, or open pull requests; the orchestrator does that.\n"
         f"- If the task is ambiguous or unreproducible, say so explicitly and stop.\n"
         f"- Keep the diff minimal and consistent with existing style.\n"
+        f"- End your final summary with a section titled '## Decisions': one "
+        f"line per non-obvious choice you made, as "
+        f"`choice - why - the alternative it beat`. Write `none` if you made "
+        f"no real choices.\n"
         + (f"\n## Acceptance criteria\n{criteria}\n" if criteria else "")
         + (f"\n## Previous failure\n{extra}\n" if extra else "")
     )
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
     return path
+
+
+RESULT_KEYS = ("result", "response", "content", "text", "output")
+
+
+def _final_text(stdout_text):
+    text = (stdout_text or "").strip()
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            try:
+                blob = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(blob, dict):
+                for key in RESULT_KEYS:
+                    value = blob.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value
+                choices = blob.get("choices")
+                if isinstance(choices, list) and choices:
+                    message = (choices[0] or {}).get("message") or {}
+                    value = message.get("content")
+                    if isinstance(value, str) and value.strip():
+                        return value
+                return ""
+    return ""
+
+
+def extract_decisions(stdout_text):
+    """The builder's decision ledger: choices with the alternative each beat.
+
+    A PR says what changed; a run later, nobody remembers why path A was
+    picked over B. The prompt asks the agent to end its summary with a
+    '## Decisions' section; this lifts it out of the runner's final JSON.
+    Best-effort by design: no section, no blob, or 'none' all yield [].
+    """
+    text = _final_text(stdout_text)
+    if not text:
+        return []
+    lines = text.splitlines()
+    out, inside = [], False
+    for line in lines:
+        stripped = line.strip()
+        if not inside:
+            if stripped.lower().lstrip("#").strip() == "decisions":
+                inside = True
+            continue
+        if stripped.startswith("#"):
+            break
+        item = stripped.lstrip("-* ").strip()
+        if item and item.lower() not in ("none", "none."):
+            out.append(item)
+    return out
 
 
 def _kill_tree(proc):

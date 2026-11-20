@@ -505,6 +505,17 @@ def exhausted(prompt_tokens, completion_tokens,
     return (prompt_tokens + completion_tokens > ceiling) or (cumulative > cap)
 
 
+def clip_summary(text):
+    """Clip a long summary keeping head and tail.
+
+    The final '## Decisions' section lives at the tail; a head-only clip
+    silently deletes the ledger exactly when the run made the most choices.
+    """
+    if len(text) <= 2000:
+        return text
+    return text[:1500] + "\n[...]\n" + text[-500:]
+
+
 def exit_code(finished, touched):
     """0 lets the orchestrator keep and gate the worktree, 1 discards it.
 
@@ -645,7 +656,7 @@ def main():
             messages.append({"role": "user", "content": nudge})
 
     print(json.dumps({"status": "completed" if finished else "budget",
-                      "result": summary[:2000], "steps": steps,
+                      "result": clip_summary(summary), "steps": steps,
                       "changed_files": sorted(CTX.touched),
                       "input_tokens": tin, "output_tokens": tout}))
     return exit_code(finished, CTX.touched)

@@ -252,6 +252,10 @@ def _process_once(cfg, con, dry=False):
                 f"gate: {'; '.join(gate['tools'])} clean\n")
         if mut_report:
             body += "\n" + mut_report + "\n"
+        decisions = agentmod.extract_decisions(res.get("stdout", ""))
+        if decisions:
+            body += ("\n## Decisions\n"
+                     + "\n".join(f"- {d}" for d in decisions) + "\n")
         if ticket["issue_number"]:
             body += f"\nCloses #{ticket['issue_number']}\n"
 

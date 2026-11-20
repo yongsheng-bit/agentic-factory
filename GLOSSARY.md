@@ -28,6 +28,10 @@ first — do not fork synonyms in code.
   main.
 - **GUI preview** — screenshots of the rendered app posted to the PR
   when a diff touches GUI paths; best-effort, never gates the ticket.
+- **Decision ledger** — the `## Decisions` section an attempt ends its
+  summary with: one line per non-obvious choice, as
+  `choice - why - the alternative it beat`. Lifted into the PR body;
+  best-effort, never gates.
 - **Escalation** — a ticket the cheap tier could not finish within its
   budget or retry allowance; it waits for a human, not another model.
 - **Canary** — a known-good ticket replayed to prove the pipeline

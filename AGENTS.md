@@ -19,3 +19,7 @@ enforces; they apply to every change in this repository.
 6. **Vocabulary:** use `GLOSSARY.md` words in code, tickets, and PRs.
 7. **Never merge a customer PR.** Opening PRs is the factory's limit;
    merging belongs to the operator.
+8. **A rule earns its place only where code enforces it.** Prose rules
+   in prompts and docs get obeyed even when the model would do better
+   alone; state situations, goals, and quality bars, and keep a hard
+   rule only when a gate, check, or test backs it with its scar.
