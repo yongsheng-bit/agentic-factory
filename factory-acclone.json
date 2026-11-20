@@ -1,0 +1,82 @@
+{
+  "repo": "C:/Users/David/ac-site-clone",
+  "db": "C:/Users/David/agentic-factory/acclone.db",
+  "base_branch": "main",
+  "pr_base": "main",
+  "remote": "origin",
+  "push": true,
+  "keep_worktrees": false,
+  "daily_budget_usd": 10.0,
+  "agent": {
+    "env": {
+      "PATH": "C:\\Users\\David\\ac-clone-env\\Scripts;{PATH}"
+    },
+    "strong": {
+      "command": [
+        "C:/Users/David/AppData/Local/hermes/tools/python-3.14.7+20260901-win32-x64/python.exe",
+        "C:/Users/David/agentic-factory/scripts/local_llm.py",
+        "{prompt_file}"
+      ],
+      "timeout_s": 900,
+      "env": {
+        "LLM_BASE": "http://192.168.68.73:8080/v1",
+        "LLM_MODEL": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
+        "LLM_MAX_STEPS": "32",
+        "LLM_MAX_TOKENS": "600000",
+        "LLM_MAX_CONTEXT": "100000",
+        "LLM_DISABLE_THINKING": "1"
+      },
+      "price_per_mtok_in": 0.3,
+      "price_per_mtok_out": 1.2
+    },
+    "cheap": {
+      "command": [
+        "C:/Users/David/AppData/Local/hermes/tools/python-3.14.7+20260901-win32-x64/python.exe",
+        "C:/Users/David/agentic-factory/scripts/local_llm.py",
+        "{prompt_file}"
+      ],
+      "timeout_s": 900,
+      "env": {
+        "LLM_BASE": "http://192.168.68.73:8080/v1",
+        "LLM_MODEL": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
+        "LLM_MAX_STEPS": "32",
+        "LLM_MAX_TOKENS": "600000",
+        "LLM_MAX_CONTEXT": "100000",
+        "LLM_DISABLE_THINKING": "1"
+      },
+      "price_per_mtok_in": 0.3,
+      "price_per_mtok_out": 1.2
+    }
+  },
+  "gates": {
+    "test_command": "python -m unittest discover -s tests",
+    "mutation": {
+      "enabled": true,
+      "min_score": 0.5,
+      "max_mutants": 12
+    }
+  },
+  "blast": {
+    "high_files": 25,
+    "high_loc": 800,
+    "medium_files": 8,
+    "medium_loc": 250
+  },
+  "gh_path": "C:\\Users\\David\\AppData\\Local\\Programs\\gh\\bin\\gh.exe",
+  "gh_token": "env:FACTORY_GH_TOKEN",
+  "project_id": null,
+  "webhook_url": "env:FACTORY_WEBHOOK",
+  "webhook_format": "discord",
+  "review": {
+    "enabled": true
+  },
+  "babysit": {
+    "enabled": true
+  },
+  "refine": {
+    "enabled": true
+  },
+  "preview": {
+    "enabled": false
+  }
+}

@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "logs", "tick.log")
 MAX_LOG = 1_000_000
 
-CONFIGS = ["factory.json", "factory-petro.json", "factory-dashboard.json"]
+CONFIGS = ["factory.json", "factory-petro.json", "factory-dashboard.json", "factory-acclone.json"]
 
 
 def resolve_token():
