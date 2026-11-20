@@ -92,7 +92,8 @@ def init(con: sqlite3.Connection) -> None:
                          ("issue_node", "TEXT"),
                          ("project_item", "TEXT"),
                          ("issue_state", "TEXT"),
-                         ("seq", "INTEGER DEFAULT 0")):
+                         ("seq", "INTEGER DEFAULT 0"),
+                         ("feedback_after", "INTEGER NOT NULL DEFAULT 0")):
         if col not in have:
             con.execute(f"ALTER TABLE tickets ADD COLUMN {col} {coltype}")
 

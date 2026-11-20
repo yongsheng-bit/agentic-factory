@@ -22,6 +22,10 @@
     "_note": "Backpressure: the factory stops claiming work while this many PRs await your review. Omit for no cap.",
     "max_pending_reviews": 3
   },
+  "babysit": {
+    "_note": "Answer human review comments on open PRs: a tick runs one agent round on the PR's own branch, pushes the fix or the refusal, and replies in the thread. Off by default.",
+    "enabled": false
+  },
   "agent": {
     "strong": {
       "command": [

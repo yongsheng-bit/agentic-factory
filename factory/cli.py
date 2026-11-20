@@ -11,6 +11,7 @@ import time
 
 from . import __version__
 from . import agent as agentmod
+from . import babysit as babysitmod
 from . import blast as blastmod
 from . import board as boardmod
 from . import db as dbmod
@@ -239,6 +240,17 @@ def cmd_sync(args):
     sys.exit(1 if errors and not changes else 0)
 
 
+def cmd_babysit(args):
+    cfg, con = _open(args)
+    if args.force:
+        cfg["babysit"] = {**(cfg.get("babysit") or {}), "enabled": True}
+    results = babysitmod.address(cfg, con, gh_path=args.gh)
+    for tid, outcome in results:
+        print(f"ticket {tid}: {outcome}")
+    if not results:
+        print("no review feedback to answer")
+
+
 def cmd_board(args):
     cfg, con = _open(args)
     try:
@@ -428,6 +440,12 @@ def build_parser():
     s.add_argument("--gh", help="path to the gh CLI; default is config gh_path, "
                                 "then PATH, then the per-user install")
     s.set_defaults(fn=cmd_sync)
+
+    s = a.add_parser("babysit",
+                     help="answer human review comments on open PRs")
+    s.add_argument("--force", action="store_true",
+                   help="run even if babysit.enabled is off")
+    s.add_argument("--gh"); s.set_defaults(fn=cmd_babysit)
 
     s = a.add_parser("board")
     s.add_argument("--dry", action="store_true",

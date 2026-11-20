@@ -184,6 +184,40 @@ def remove(root, path, branch=None, force=True):
             pass
 
 
+def checkout(root, branch):
+    """Worktree on an EXISTING remote branch. Returns (path, branch).
+
+    The babysit round answers review on the branch the PR already points
+    at, so the base is origin/<branch>, never main. The local ref is
+    deleted first: a leftover from the original attempt may predate the
+    pushed head, and building an answer on a stale base would push a
+    non-fast-forward. The remote branch is the only truth here; a failed
+    fetch or a missing origin/<branch> raises rather than branching from
+    somewhere else and calling it the same branch.
+    """
+    root = repo_root(root)
+    _git(["fetch", "--quiet", "origin"], cwd=root)
+    wt_root = ensure_worktrees_dir(root)
+    path = os.path.join(wt_root, os.path.basename(branch.replace("/", "_")))
+
+    if os.path.exists(path):
+        remove(root, path)
+    try:
+        _git(["rev-parse", "--verify", "--quiet", branch], cwd=root)
+        _git(["branch", "-D", branch], cwd=root)
+    except WorktreeError:
+        pass
+    try:
+        _git(["rev-parse", "--verify", "--quiet", f"origin/{branch}"], cwd=root)
+    except WorktreeError:
+        raise WorktreeError(
+            f"origin/{branch} does not exist; refusing to answer review "
+            "from a different base")
+    _git(["worktree", "add", "--track", "-b", branch, path, f"origin/{branch}"],
+         cwd=root)
+    return path, branch
+
+
 def head_sha(path):
     """Current HEAD sha. Capture this BEFORE committing so the diff you
     classify later is the agent's change and not an empty one."""

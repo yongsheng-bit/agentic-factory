@@ -87,6 +87,7 @@ Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
 | `board` | `--dry` | Push ticket statuses to the GitHub project board columns |
 | `import-issues` | `--gh`, `--label` | Import open GitHub issues with a label as tickets (idempotent) |
 | `sync` | `--gh` | **Read PR state back** from GitHub into the queue: merged/closed, who merged, `approved` vs `admin-bypass`. `--gh` overrides the `gh` binary path |
+| `babysit` | `--force`, `--gh` | **Answer review comments** on open PRs: one agent round per PR on its own branch, push the fix or the refusal, reply in the thread. Runs inside `tick`; `--force` runs it once even when disabled in config |
 | `canary` | `--python`, `--data`, `--truth`, `--repo` | Replay the merged parser against real receipts vs a ground-truth CSV, run under the *customer's* venv so the factory stays stdlib-only. Exit 0 pass / 1 fail / 2 setup |
 | `watchdog` | `--older-than`, `--kill` | Reap runs older than `--older-than` seconds and escalate their tickets; `--kill` also tree-kills the agents still running |
 | `gate` | `--path` | Run the secret + dependency gates over a repo/worktree; exit 1 on failure |
