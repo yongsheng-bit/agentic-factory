@@ -18,6 +18,7 @@ draining.
 
 from __future__ import annotations
 
+from . import babysit as babysitmod
 from . import board as boardmod
 from . import db as dbmod
 from . import issues as issuesmod, notify, sync as syncmod, worker
@@ -25,8 +26,8 @@ from . import issues as issuesmod, notify, sync as syncmod, worker
 
 def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
     s = {"busy": False, "reaped": 0, "sync_changes": 0, "sync_errors": 0,
-         "issues_imported": 0, "board_error": None, "outcomes": [],
-         "alerts": [], "spend_today": 0.0, "idle": True}
+         "issues_imported": 0, "babysit": [], "board_error": None,
+         "outcomes": [], "alerts": [], "spend_today": 0.0, "idle": True}
 
     s["reaped"] = worker.watchdog(
         cfg, con, max_age_s=int(cfg.get("watchdog_stale_s", 3600)))
@@ -46,6 +47,19 @@ def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
     except syncmod.SyncError as exc:
         s["sync_errors"] = 1
         s["alerts"].append(f"sync failed: {exc}")
+
+    try:
+        for tid, outcome in babysitmod.address(cfg, con, gh_path=gh_path):
+            s["babysit"].append([tid, outcome])
+            if outcome == "replied":
+                s["alerts"].append(f"ticket {tid}: review feedback answered")
+            elif outcome == "escalated" or outcome.startswith("escalated"):
+                s["alerts"].append(f"ticket {tid}: babysit {outcome}")
+            elif outcome.startswith("fetch failed") or \
+                    outcome.startswith("reply failed"):
+                s["alerts"].append(f"ticket {tid}: {outcome}")
+    except Exception as exc:
+        s["alerts"].append(f"babysit pass failed: {str(exc)[:200]}")
 
     try:
         _, imported, _skipped = issuesmod.import_issues(cfg, con, gh_path=gh_path)

@@ -137,8 +137,14 @@ def screenshot_pages(html_paths, out_dir, python=None):
 
 
 def comment_body(png_paths):
-    """Markdown PR comment embedding each screenshot."""
-    lines = ["**GUI preview** (synthetic fixture data, rendered from this "
+    """Markdown PR comment embedding each screenshot.
+
+    The factory marker is what tells babysit this is the factory's own
+    voice and not review feedback; a preview comment without it would be
+    answered by an agent round forever.
+    """
+    lines = ["<!-- factory:agent -->",
+             "**GUI preview** (synthetic fixture data, rendered from this "
              "branch in headless Chromium):", ""]
     for png in png_paths:
         name = os.path.splitext(os.path.basename(png))[0]

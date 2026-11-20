@@ -28,6 +28,12 @@ first — do not fork synonyms in code.
   main.
 - **GUI preview** — screenshots of the rendered app posted to the PR
   when a diff touches GUI paths; best-effort, never gates the ticket.
+- **Babysit** — a feedback round on an OPEN PR: human review comments
+  are handed to the agent on the PR's own branch; it pushes the fix or
+  answers in the thread why it will not. Every factory comment carries
+  the `<!-- factory:agent -->` marker so the next pass can tell the
+  factory's own voice from feedback. One round per pass; tests re-run,
+  mutation gate does not.
 - **Decision ledger** — the `## Decisions` section an attempt ends its
   summary with: one line per non-obvious choice, as
   `choice - why - the alternative it beat`. Lifted into the PR body;
