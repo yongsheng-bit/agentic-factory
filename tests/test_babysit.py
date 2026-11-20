@@ -57,7 +57,67 @@ class TestReplyBody(unittest.TestCase):
         self.assertIn("no code change this round", body)
 
 
+class TestClassifyDecisions(unittest.TestCase):
+    def test_tagged_rule_goes_to_rules(self):
+        fixes, rules = babysit.classify_decisions(
+            ["comment 10: rule: added a lint gate for magic strings - "
+             "same class would recur"])
+        self.assertEqual(fixes, [])
+        self.assertEqual(len(rules), 1)
+
+    def test_tagged_fix_and_untagged_default_to_fixes(self):
+        fixes, rules = babysit.classify_decisions(
+            ["comment 10: fix: switched to liters - ticket says liters",
+             "comment 11: renamed the column - comment asked for it"])
+        self.assertEqual(len(fixes), 2)
+        self.assertEqual(rules, [])
+
+    def test_tag_is_case_insensitive(self):
+        _, rules = babysit.classify_decisions(["comment 3: RULE: gate added"])
+        self.assertEqual(len(rules), 1)
+
+    def test_rule_word_later_in_the_line_is_not_a_tag(self):
+        fixes, rules = babysit.classify_decisions(
+            ["comment 4: dropped the rule about liters - no longer applies"])
+        self.assertEqual(len(fixes), 1)
+        self.assertEqual(rules, [])
+
+
+class TestReplyBodyRules(unittest.TestCase):
+    def test_rule_claims_get_their_own_section_with_verify_warning(self):
+        body = babysit.reply_body(
+            [comment(10, "david", "stop using magic strings"),
+             comment(11, "david", "fix this total")],
+            ["comment 10: rule: added a lint gate for magic strings - "
+             "class would recur",
+             "comment 11: fix: corrected the total - arithmetic"],
+            changed=True, tests_note="Tests were re-run and pass.")
+        self.assertIn("Proposed standing rules", body)
+        self.assertIn("verify the check", body)
+        self.assertIn("comment 10: rule:", body)
+        self.assertIn("comment 11: fix:", body)
+
+    def test_no_rules_means_no_rules_section(self):
+        body = babysit.reply_body(
+            [comment(10, "david", "x")],
+            ["comment 10: fix: done - trivial"],
+            changed=True, tests_note="t")
+        self.assertNotIn("Proposed standing rules", body)
+
+
 class TestFeedbackPrompt(unittest.TestCase):
+    def test_prompt_asks_for_fix_or_rule_classification(self):
+        with tempfile.TemporaryDirectory() as td:
+            ticket = {"id": 3, "ref": "T-3", "title": "t", "body": "b",
+                      "max_retries": 3}
+            path = babysit.write_feedback_prompt(
+                td, ticket, [comment(99, "david", "no magic strings")],
+                out_dir=td)
+            text = open(path, encoding="utf-8").read()
+        self.assertIn("Classify every comment", text)
+        self.assertIn("do not claim one", text.lower())
+        self.assertIn("fix|rule", text)
+
     def test_prompt_carries_comments_and_contract(self):
         with tempfile.TemporaryDirectory() as td:
             ticket = {"id": 3, "ref": "T-3", "title": "fix totals",

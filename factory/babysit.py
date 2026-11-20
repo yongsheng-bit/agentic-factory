@@ -11,6 +11,14 @@ them to the agent on the PR's own branch: fix what the comment asks, or
 answer in the thread why it will not. The reply always carries the factory
 marker so the next pass can tell its own voice from the human's.
 
+Every answered comment is classified: `fix` (a one-off change to this
+code) or `rule` (the repo is missing a standing rule - the same class of
+comment would recur on any future change). A `rule` claim must come with
+the deterministic check that enforces it, added in the same PR; the reply
+lists rule claims separately and tells the human to verify the check is
+in the diff before merging. An untagged ledger line counts as a fix: the
+factory never upgrades its own work to "rule" by assumption.
+
 Honest limits, stated in the reply itself: a babysit round re-runs the test
 gate but not the mutation gate, and the reply is one summary quoting each
 new comment - the cheap tier is not trusted to map fixes to comments one
@@ -21,6 +29,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -104,17 +113,44 @@ def write_feedback_prompt(workdir, ticket, comments, out_dir=None):
         "The branch already contains the change under review.\n"
         "- Address EVERY comment above: change the code, or decide the "
         "comment is wrong and say exactly why.\n"
+        "- Classify every comment you answer as `fix` (a one-off change to "
+        "this code) or `rule` (the repo is missing a standing rule: the "
+        "same class of comment would recur on any future change).\n"
+        "- When a comment is a `rule`: also add, in this same change, the "
+        "smallest deterministic check (lint rule, CI check, or test) that "
+        "makes this class of comment impossible. A rule with no enforcing "
+        "check is prose, not a rule - do not claim one.\n"
         "- Work only inside the current directory.\n"
         "- Do not commit, push, or open pull requests; the orchestrator "
         "does that.\n"
         "- Keep the diff minimal and consistent with existing style.\n"
         "- End your final summary with a section titled '## Decisions': "
-        "one line per comment, as `comment <id>: what you did - why`. "
-        "Write `none` only if there was nothing to do.\n"
+        "one line per comment, as `comment <id>: fix|rule - what you did "
+        "- why`. Write `none` only if there was nothing to do.\n"
     )
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
     return path
+
+
+_KIND_RE = re.compile(r"comment\s+\S+:\s*(fix|rule)\b", re.IGNORECASE)
+
+
+def classify_decisions(decisions):
+    """Split ledger lines into (fixes, rules) by their fix|rule tag.
+
+    The classifier is the agent; this only routes the tag. An untagged or
+    unknown tag counts as a fix: the factory never upgrades its own work
+    to "rule" by assumption.
+    """
+    fixes, rules = [], []
+    for line in decisions:
+        m = _KIND_RE.search(line)
+        if m and m.group(1).lower() == "rule":
+            rules.append(line)
+        else:
+            fixes.append(line)
+    return fixes, rules
 
 
 def reply_body(comments, decisions, changed, tests_note):
@@ -125,14 +161,20 @@ def reply_body(comments, decisions, changed, tests_note):
         first = (c.get("body") or "").strip().splitlines()
         lines.append(f"> {first[0] if first else '(empty comment)'}")
     lines.append("")
+    fixes, rules = classify_decisions(decisions)
     if decisions:
-        lines += [f"- {d}" for d in decisions]
+        lines += [f"- {d}" for d in fixes]
     elif changed:
         lines.append("- code changed; the agent left no decision ledger, "
                      "read the pushed commit.")
     else:
         lines.append("- no code change this round; the agent judged the "
                      "comments already satisfied or out of scope.")
+    if rules:
+        lines += ["", "Proposed standing rules - the agent claims the "
+                  "enforcing check is in this diff; verify the check "
+                  "before merging:",
+                  *[f"- {r}" for r in rules]]
     lines.append("")
     lines.append(f"{tests_note} Mutation gate is not re-run on babysit "
                  "rounds; it ran on the original attempt.")
