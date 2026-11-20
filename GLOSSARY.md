@@ -33,7 +33,10 @@ first — do not fork synonyms in code.
   answers in the thread why it will not. Every factory comment carries
   the `<!-- factory:agent -->` marker so the next pass can tell the
   factory's own voice from feedback. One round per pass; tests re-run,
-  mutation gate does not.
+  mutation gate does not. Each answered comment is tagged `fix` (one-off)
+  or `rule` (a standing rule the repo was missing); a `rule` claim must
+  ship the deterministic check that enforces it in the same PR, and the
+  reply flags the claim for the human to verify before merging.
 - **Decision ledger** — the `## Decisions` section an attempt ends its
   summary with: one line per non-obvious choice, as
   `choice - why - the alternative it beat`. Lifted into the PR body;
