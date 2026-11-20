@@ -208,7 +208,12 @@ factory/gates.py     secret + dependency gate
 factory/worktree.py  per-ticket git worktree isolation
 factory/agent.py     model-tier routing, wall-clock cap, tree kill, cost parse
 factory/worker.py    the loop
+factory/preview.py   GUI screenshot preview posted to PRs (best-effort)
 factory/cli.py       the whole CLI - see Commands above
+GLOSSARY.md          shared vocabulary - name things with these words
+AGENTS.md            rules for working on the factory itself
+docs/grill-ticket.md ticket intake protocol (grill before queueing)
+scripts/retro.py     weekly digest: spend, failure classes, human queue
 scripts/local_llm.py cheap-tier agent against a local OpenAI-compatible endpoint
 tools/blast_check.py same rules, run in CI
 .github/workflows/quality.yml
