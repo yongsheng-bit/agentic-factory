@@ -1,23 +1,32 @@
-# Agentic Software Factory — weekend 1 build
+# Agentic Software Factory
 
 A working implementation of the "agentic software factory" pattern: a queue of
 tickets, an agent that implements each one in an isolated git worktree, and a
 set of gates that decide whether the result becomes a PR, gets retried, or gets
-escalated to a human.
+escalated to a human. **Agent proposes, code disposes** — every ordering,
+budget and gate decision is deterministic Python; the model only ever does the
+work inside one bounded attempt.
 
-This is deliberately **not** the full 14-box diagram. It is the smallest version
-that is safe to point at a real repository, plus the four controls the diagram
-leaves out (cost cap, supply-chain gate, blast-radius routing, a kill switch
-that reaches running agents).
+This is not a demo. It runs unattended on a scheduled tick against real
+repositories and has merged 30+ tickets. What makes it safe is not the model
+(a cheap local one) but the seams around it: fail-closed gates, a mutation gate
+that proves the tests constrain the code, a blast-radius router that sends
+dangerous diffs to a human, and a PR body that states — at open time — exactly
+what was *not* proven.
 
 ```
-ticket -> [budget caps] -> worktree -> agent -> commit
-                                                    |
-                       secret gate -> blast gate ---+
-                                                    |
-                            low/medium -> push + PR | high -> needs_review (human)
-                                                    |
-                            fail -> retry (max 3) -> escalate
+ticket -> refine gate -> review cap -> budget caps -> worktree -> agent
+           (body is     (stop         (per-ticket    (isolated  (cheap or
+            buildable)   producing)    + daily)       git)      strong tier)
+                                                                     |
+  tests (fail-closed) <- secret+deps gate <- junk-diff check <- commit
+       |                                                           |
+  mutation gate (tests must kill mutants)                          |
+       |                                                           |
+  blast gate --low/med--> PR + AI review + Not proven + Decisions  |
+       |                + GUI preview comment <- sync reads merge  |
+       +--high--> needs_review (human)       <-retry (max 3)-------+
+                                                  -> escalate (human)
 ```
 
 ## Quickstart
@@ -37,9 +46,10 @@ python -m factory.cli -c factory.json once         # real run
 
 python -m factory.cli -c factory.json status
 python -m factory.cli -c factory.json worker       # run the loop
+python -m factory.cli -c factory.json tick         # one unattended cycle (cron)
 ```
 
-Tests (55 unit + 13 end-to-end assertions, stdlib only):
+Tests (271 assertions, stdlib only, no pytest):
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py"   # unit
@@ -73,8 +83,12 @@ Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
 | `resume` | — | Release the kill switch |
 | `once` | `--dry` | Process a single ticket; `--dry` sets up the worktree without running an agent |
 | `worker` | `--dry`, `--idle` | Run the loop, sleeping `--idle` seconds when the queue is empty |
-| `watchdog` | `--older-than`, `--kill` | Reap runs older than `--older-than` seconds and escalate their tickets; `--kill` also tree-kills the agents still running |
+| `tick` | `--max`, `--gh`, `--no-board`, `--json` | **Unattended cycle:** reap stale runs, sync PR state from GitHub, drain up to `--max` tickets, update the project board, print one line. Safe to cron; a busy engine makes it a no-op |
+| `board` | `--dry` | Push ticket statuses to the GitHub project board columns |
+| `import-issues` | `--gh`, `--label` | Import open GitHub issues with a label as tickets (idempotent) |
 | `sync` | `--gh` | **Read PR state back** from GitHub into the queue: merged/closed, who merged, `approved` vs `admin-bypass`. `--gh` overrides the `gh` binary path |
+| `canary` | `--python`, `--data`, `--truth`, `--repo` | Replay the merged parser against real receipts vs a ground-truth CSV, run under the *customer's* venv so the factory stays stdlib-only. Exit 0 pass / 1 fail / 2 setup |
+| `watchdog` | `--older-than`, `--kill` | Reap runs older than `--older-than` seconds and escalate their tickets; `--kill` also tree-kills the agents still running |
 | `gate` | `--path` | Run the secret + dependency gates over a repo/worktree; exit 1 on failure |
 | `blast` | `--path` | Classify the working diff as low/medium/high; exit 2 on high |
 
@@ -83,14 +97,35 @@ Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
 | Control | Where | Why it exists |
 |---|---|---|
 | Kill switch | `cli pause` / `resume`, checked before every step | Stops NEW work within seconds |
-| Watchdog | `cli watchdog --kill` | Reaps hung runs, tree-kills orphaned agents |
+| Watchdog | `cli watchdog --kill`, run every tick | Reaps hung runs, tree-kills orphaned agents |
+| Refine gate | `refine.py`, before any agent call | A ticket whose body names files that do not exist, or demands a shape instead of an outcome, wastes a whole attempt; grill it at intake instead (`docs/grill-ticket.md`) |
+| Review cap | `review.max_pending_reviews` | Backpressure is a number: at the cap the factory stops producing, because the binding constraint is your review attention, not agent throughput |
 | Per-ticket budget | `tickets.budget_usd`, checked before start | A retry loop should not turn $5 into $400 |
 | Daily budget | `daily_budget_usd`, auto-pauses queue | Caps a bad day at a known number |
+| Fail-closed tests | `gates.require_tests` (default on) | An empty `test_command` pauses the queue as **misconfigured**; a missing required check must never become a green run |
 | Retry cap | `max_retries` (3) then `escalated` | Matches the diagram's "3 retries + escalate" |
 | Secret gate | `gates.py`, **fails closed** | An agent that commits a key is a breach, not a bug |
 | Dependency gate | `gates.py` (osv-scanner / npm audit / pip-audit) | Agents install packages; someone should check them |
+| Mutation gate | `mutate.py` | Tests passing proves nothing unless they *kill mutants* of the new code; a suite that asserts nothing gets bounced |
 | Blast radius | `blast.py`, deterministic path rules | Gates human review; must be the most reliable part |
 | Human gate | `needs_review` status + branch protection | High blast never auto-merges |
+| Canary | `cli canary` | A regression in a merged parser is caught against ground truth, not vibes |
+| Retro digest | `scripts/retro.py` | Weekly: spend, failure classes, and the human-pending queue — the operator's own review backlog made visible |
+
+## What every PR proves (and what it says it did not)
+
+The PR body is evidence, assembled by code, never by the agent:
+
+- **blast radius + tier + cost + gate lines** — what ran, what it cost
+- **`## Not proven`** — every gate that did *not* run on this diff, named
+  (tests absent, mutation disabled, preview pending/failed, review down).
+  The section is never empty: green must never be confused with absent.
+- **mutation report** — mutants generated, killed, survived
+- **`## Decisions`** — the agent's ledger: one line per non-obvious choice,
+  `choice - why - the alternative it beat`. Best-effort, never gates.
+- **GUI preview** — for page changes, a real headless-browser screenshot of
+  the rendered pages attached after open (best-effort; runs as a subprocess
+  of the *customer's* venv, so the factory itself stays stdlib-only)
 
 ## Blast radius rules
 
@@ -190,39 +225,52 @@ The pipeline only has teeth if GitHub is told to enforce it:
    `contents: write` and no `pull-requests: write` is a reasonable start; never
    give it an admin token, and never give it production cloud credentials.
 
+## House rules
+
+`AGENTS.md` (injected into every agent prompt, and CI-enforced where possible)
+carries the scar tissue, including: *a green job is not proof its steps ran*,
+and *a rule earns its place only where code enforces it* — prose rules get
+obeyed even when the model would do better alone, so hard rules live behind
+gates, checks, and tests. `GLOSSARY.md` is the shared vocabulary; name things
+with its words or the retro cannot find them.
+
 ## What is intentionally not here yet
 
-Triage agent (reproduce-the-bug), refinement agent (acceptance criteria), AI
-reviewer, QA agent against staging, observability loop-back, formal
-verification. Each is a separate worker over the same queue — add them in that
-order, and only after the pipeline above has run clean on real tickets for a
-week. Formal verification is the one I would drop entirely: replace it with
-contract tests plus a shadow-write dry run.
+Triage agent (reproduce-the-bug before anyone builds it), QA agent against a
+staging deploy, observability loop-back (errors become tickets on their own).
+Each is a separate worker over the same queue. Formal verification stays
+dropped on purpose: contract tests plus the canary do that job cheaper.
 
 ## Files
 
 ```
-factory/db.py        queue, runs, spend ledger, kill switch (sqlite, atomic claims)
+factory/db.py        queue, runs, spend ledger, kill switch, review-cap flag (sqlite, atomic claims)
 factory/blast.py     deterministic blast-radius rules
-factory/gates.py     secret + dependency gate
+factory/gates.py     secret + dependency gate, test runner
+factory/mutate.py    mutation gate: does the test suite constrain the new code?
+factory/refine.py    ticket intake gate (buildable body, outcome criteria)
+factory/review.py    independent AI reviewer over the diff (advisory)
+factory/preview.py   GUI screenshot preview posted to PRs (best-effort, customer venv)
+factory/canary.py    ground-truth replay of a merged parser, run in the customer venv
 factory/worktree.py  per-ticket git worktree isolation
-factory/agent.py     model-tier routing, wall-clock cap, tree kill, cost parse
-factory/worker.py    the loop
-factory/preview.py   GUI screenshot preview posted to PRs (best-effort)
+factory/agent.py     model-tier routing, decision-ledger extraction, wall-clock cap, tree kill, cost parse
+factory/worker.py    the loop, the gates' order, and the PR body
+factory/tick.py      the unattended cycle (reap, sync, drain, board)
+factory/sync.py      PR state read-back (merged/closed, who merged, how)
+factory/board.py     GitHub project board column sync
+factory/issues.py    GitHub issue import (labelled, idempotent)
+factory/notify.py    operator notifications
 factory/cli.py       the whole CLI - see Commands above
 GLOSSARY.md          shared vocabulary - name things with these words
 AGENTS.md            rules for working on the factory itself
 docs/grill-ticket.md ticket intake protocol (grill before queueing)
 scripts/retro.py     weekly digest: spend, failure classes, human queue
+scripts/tick_task.py scheduled-task wrapper for `cli tick`
 scripts/local_llm.py cheap-tier agent against a local OpenAI-compatible endpoint
-tools/blast_check.py same rules, run in CI
+tools/blast_check.py same blast rules, run in CI
+tools/no_comments_check.py CI guard: no `#` comments in Python
 .github/workflows/quality.yml
-tests/test_core.py            unit tests (queue, blast rules, gates, worktree)
-tests/test_local_llm_tools.py sandbox tests: path escape, denylist, output shape
-tests/fake_agent.py           FAKE_MODE=ok|fail|secret|migration|empty
-tests/smoke.py                end-to-end over real git, no tokens spent
-tests/live_llm.py             end-to-end over real git + real model
-tests/live_adversarial.py     phantom bug + harder task
+tests/               unit tests + fake-agent smoke + live-model probes
 ```
 
 ## Bugs the tests actually caught
@@ -243,4 +291,9 @@ Not hypothetical — each of these was a live defect found by running the suite:
    the tool and killed the run; the model never got to correct itself.
 6. **`list_files` returned nothing for root-level files.** `fnmatch` has no real
    `**`, so `**/*.py` never matched `app.py`.
-
+7. **The retro window was always empty.** `runs.started_at` is an epoch REAL
+   compared against `date('now')` — a number vs a string that silently matched
+   nothing. Fixed by computing the cutoff in Python.
+8. **A head-only summary clip would have eaten the decision ledger.** The
+   ledger lives at the tail of the agent summary; the clip kept the head.
+   Caught by a test written while porting the feature, before it shipped.
