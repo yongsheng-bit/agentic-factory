@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS runs (
 
 CREATE TABLE IF NOT EXISTS control (
     id     INTEGER PRIMARY KEY CHECK (id = 1),
-    paused INTEGER NOT NULL DEFAULT 0
+    paused INTEGER NOT NULL DEFAULT 0,
+    cap_notified INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS escalations (
@@ -99,6 +100,10 @@ def init(con: sqlite3.Connection) -> None:
     for col, coltype in (("tier", "TEXT"), ("tier_reason", "TEXT")):
         if col not in have_runs:
             con.execute(f"ALTER TABLE runs ADD COLUMN {col} {coltype}")
+    have_control = {r["name"] for r in con.execute("PRAGMA table_info(control)")}
+    if "cap_notified" not in have_control:
+        con.execute("ALTER TABLE control ADD COLUMN cap_notified INTEGER"
+                    " NOT NULL DEFAULT 0")
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
 
@@ -344,6 +349,20 @@ def set_paused(con, flag: bool):
 def is_paused(con) -> bool:
     r = con.execute("SELECT paused FROM control WHERE id=1").fetchone()
     return bool(r and r["paused"])
+
+
+def count_by_status(con, status):
+    return int(con.execute(
+        "SELECT COUNT(*) FROM tickets WHERE status=?", (status,)).fetchone()[0])
+
+
+def get_cap_notified(con) -> bool:
+    r = con.execute("SELECT cap_notified FROM control WHERE id=1").fetchone()
+    return bool(r and r["cap_notified"])
+
+
+def set_cap_notified(con, flag: bool):
+    con.execute("UPDATE control SET cap_notified=? WHERE id=1", (1 if flag else 0,))
 
 
 def running_pids(con):

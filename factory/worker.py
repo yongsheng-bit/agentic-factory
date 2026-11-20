@@ -102,6 +102,30 @@ def _process_once(cfg, con, dry=False):
                     f"`python -m factory.cli resume` to continue.")
         return "budget"
 
+    gates_cfg = cfg.get("gates") or {}
+    if gates_cfg.get("require_tests", True) and not str(
+            gates_cfg.get("test_command") or "").strip():
+        dbmod.set_paused(con, True)
+        notify.post(cfg, "GATES MISCONFIGURED",
+                    "require_tests is on but gates.test_command is empty; a "
+                    "missing test command must never become a green run. "
+                    "Queue paused; fix the config, then run "
+                    "`python -m factory.cli resume`.")
+        return "gates misconfigured"
+
+    cap = (cfg.get("review") or {}).get("max_pending_reviews")
+    if cap is not None:
+        pending = dbmod.count_by_status(con, "pr_open")
+        if pending >= int(cap):
+            if not dbmod.get_cap_notified(con):
+                dbmod.set_cap_notified(con, True)
+                notify.post(cfg, "REVIEW CAP",
+                            f"{pending} PRs await human review (cap {cap}); "
+                            "no new work starts until one merges.")
+            return f"review-cap ({pending}/{cap})"
+        if dbmod.get_cap_notified(con):
+            dbmod.set_cap_notified(con, False)
+
     ticket = dbmod.claim_next(con)
     if ticket is None:
         return "idle"

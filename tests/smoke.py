@@ -44,6 +44,7 @@ def cfg_for(repo, db, mode, **over):
         "base_branch": "HEAD",
         "push": False,
         "daily_budget_usd": 50.0,
+        "gates": {"require_tests": False},
         "agent": {
             "strong": {"command": [PY, FAKE, "{prompt_file}"], "timeout_s": 120,
                        "env": {"FAKE_MODE": mode}},

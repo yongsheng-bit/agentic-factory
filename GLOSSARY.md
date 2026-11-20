@@ -32,6 +32,13 @@ first — do not fork synonyms in code.
   summary with: one line per non-obvious choice, as
   `choice - why - the alternative it beat`. Lifted into the PR body;
   best-effort, never gates.
+- **Review cap** — the ceiling on PRs awaiting human review
+  (`review.max_pending_reviews`). At the cap the factory stops claiming
+  work: the binding constraint is the operator's judgment, not agent
+  throughput.
+- **Fail-closed gate** — a required check that is *missing* counts as
+  misconfiguration, not as passing. An absent test command pauses the
+  queue; it never becomes a green run.
 - **Escalation** — a ticket the cheap tier could not finish within its
   budget or retry allowance; it waits for a human, not another model.
 - **Canary** — a known-good ticket replayed to prove the pipeline

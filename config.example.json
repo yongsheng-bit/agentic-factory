@@ -8,6 +8,20 @@
   "push": true,
   "keep_worktrees": false,
   "daily_budget_usd": 20.0,
+  "gates": {
+    "_require_tests_note": "Defaults to true: an empty test_command pauses the queue as misconfigured instead of opening untested green PRs. Set false only for experiments.",
+    "require_tests": true,
+    "test_command": "python -m unittest discover -s tests",
+    "mutation": {
+      "enabled": false,
+      "min_score": 0.5,
+      "max_mutants": 12
+    }
+  },
+  "review": {
+    "_note": "Backpressure: the factory stops claiming work while this many PRs await your review. Omit for no cap.",
+    "max_pending_reviews": 3
+  },
   "agent": {
     "strong": {
       "command": [
