@@ -13,6 +13,7 @@ import difflib
 import json
 import os
 import re
+import subprocess
 
 from . import llmclient
 
@@ -49,6 +50,35 @@ STDLIB_ROOTS = {"os", "sys", "re", "json", "csv", "io", "time", "math",
                 "subprocess", "shutil", "tempfile", "unittest", "typing"}
 
 
+def _tree_files(repo_dir):
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_dir, "ls-tree", "-r", "--name-only",
+             "origin/main"],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return set(r.stdout.split())
+
+
+def _tree_show(repo_dir, rel):
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo_dir, "show", "origin/main:" + rel],
+            capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _file_exists(repo_dir, sym, tree):
+    if tree is not None:
+        return sym in tree
+    return os.path.exists(os.path.join(repo_dir, sym.replace("/", os.sep)))
+
+
 def symbol_problems(repo_dir, body, sibling_texts):
     """Backticked dotted names and files in the ticket must exist in the
     repo, or be named by a sibling ticket that creates them (T3).
@@ -60,27 +90,38 @@ def symbol_problems(repo_dir, body, sibling_texts):
     the full module path (`petro.dips.resolve_blocks`).
     """
     problems = []
+    tree = _tree_files(repo_dir)
     for sym in symbols(body):
         if sym.endswith(".py") or "/" in sym:
-            if not os.path.exists(os.path.join(repo_dir,
-                                               sym.replace("/", os.sep))):
+            if not _file_exists(repo_dir, sym, tree):
                 if not _mentioned_elsewhere(sym, sibling_texts):
                     problems.append(f"file `{sym}` does not exist in the repo")
             continue
         parts = sym.split(".")
         if len(parts) < 3 or parts[0] in STDLIB_ROOTS:
             continue
-        stem = os.path.join(repo_dir, *parts[:-1])
-        target = stem + ".py" if os.path.exists(stem + ".py") else (
-            os.path.join(stem, "__init__.py")
-            if os.path.exists(os.path.join(stem, "__init__.py")) else None)
-        if target is None:
+        if tree is not None:
+            stem = "/".join(parts[:-1])
+            rel = stem + ".py" if stem + ".py" in tree else (
+                stem + "/__init__.py" if stem + "/__init__.py" in tree
+                else None)
+            src = _tree_show(repo_dir, rel) if rel is not None else None
+        else:
+            local_stem = os.path.join(repo_dir, *parts[:-1])
+            rel = local_stem + ".py" if os.path.exists(local_stem + ".py") \
+                else (os.path.join(local_stem, "__init__.py")
+                      if os.path.exists(
+                          os.path.join(local_stem, "__init__.py"))
+                      else None)
+            src = None
+            if rel is not None:
+                with open(rel, encoding="utf-8", errors="replace") as fh:
+                    src = fh.read()
+        if src is None:
             if not _mentioned_elsewhere(sym, sibling_texts):
                 problems.append(
                     f"module for `{sym}` does not exist in the repo")
             continue
-        with open(target, encoding="utf-8", errors="replace") as fh:
-            src = fh.read()
         if parts[-1] not in src and not _mentioned_elsewhere(sym,
                                                              sibling_texts):
             problems.append(
