@@ -121,15 +121,90 @@ def create(root, ticket_id, ref=None, base="HEAD"):
     if os.path.exists(path):
         remove(root, path, branch=branch)
     else:
-
         try:
             _git(["rev-parse", "--verify", "--quiet", branch], cwd=root)
-            _git(["branch", "-D", branch], cwd=root)
         except WorktreeError:
             pass
+        else:
+            try:
+                _git(["branch", "-D", branch], cwd=root)
+            except WorktreeError:
+                try:
+                    _git(["worktree", "prune"], cwd=root)
+                    _git(["branch", "-D", branch], cwd=root)
+                except WorktreeError:
+                    _git(["branch", "-m", branch,
+                          f"{branch}-stale-{int(time.time())}"], cwd=root)
 
     _git(["worktree", "add", "-b", branch, path, base], cwd=root)
     return path, branch
+
+
+def sweep(root, dry=False):
+    """Reclaim the leftovers a factory run drops on the floor.
+
+    Three corpses accumulate between cycles, each one eventually fatal to a
+    dispatch: worktree registrations whose directory is gone (they pin branch
+    names so `branch -D` fails and every retry dies on "branch already
+    exists"), local agent/cron branches already merged into origin/main, and
+    rescue directories whose removal hit a Windows file lock. Only merged
+    branches are deleted - unmerged work is never destroyed - and only
+    unregistered directories under .factory-worktrees are removed.
+    """
+    root = repo_root(root)
+    report = {"pruned": 0, "branches": [], "dirs": [], "locked": []}
+
+    def _registered_paths():
+        listed = _git(["worktree", "list", "--porcelain"], cwd=root)
+        return {ln[len("worktree "):].replace("\\", "/").rstrip().lower()
+                for ln in listed.splitlines()
+                if ln.startswith("worktree ")}, {
+            ln[len("branch "):].strip().lower().removeprefix("refs/heads/")
+            for ln in listed.splitlines() if ln.startswith("branch ")}
+
+    before, _ = _registered_paths()
+    _git(["worktree", "prune"], cwd=root)
+    after, checked_out = _registered_paths()
+    report["pruned"] = len(before - after)
+    registered = after
+
+    branches = _git(["branch", "--list", "agent/*", "cron/*",
+                     "--format=%(refname:short)"], cwd=root)
+    for name in [b.strip() for b in branches.splitlines() if b.strip()]:
+        if name.lower() in checked_out:
+            continue
+        try:
+            _git(["merge-base", "--is-ancestor", name, "origin/main"],
+                 cwd=root)
+        except WorktreeError:
+            continue
+        if dry:
+            report["branches"].append(name)
+            continue
+        try:
+            _git(["branch", "-D", name], cwd=root)
+            report["branches"].append(name)
+        except WorktreeError:
+            pass
+
+    wt_root = os.path.join(root, ".factory-worktrees")
+    if os.path.isdir(wt_root):
+        for entry in sorted(os.listdir(wt_root)):
+            full = os.path.join(wt_root, entry).replace("\\", "/")
+            if full.lower().rstrip("/") in registered:
+                continue
+            if dry:
+                report["dirs"].append(entry)
+                continue
+            if _rmtree(full):
+                report["dirs"].append(entry)
+            else:
+                report["locked"].append(entry)
+        try:
+            _git(["worktree", "prune"], cwd=root)
+        except WorktreeError:
+            pass
+    return report
 
 
 def _rmtree(path):

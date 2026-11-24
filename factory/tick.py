@@ -22,6 +22,7 @@ from . import babysit as babysitmod
 from . import board as boardmod
 from . import db as dbmod
 from . import issues as issuesmod, notify, sync as syncmod, worker
+from . import worktree as worktreemod
 
 
 def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
@@ -31,6 +32,16 @@ def tick(cfg, con, gh_path=None, max_tickets=2, board=True):
 
     s["reaped"] = worker.watchdog(
         cfg, con, max_age_s=int(cfg.get("watchdog_stale_s", 3600)))
+
+    s["sweep"] = {"pruned": 0, "branches": 0, "dirs": 0, "locked": 0}
+    try:
+        sw = worktreemod.sweep(cfg["repo"])
+        s["sweep"] = {"pruned": sw["pruned"], "branches": len(sw["branches"]),
+                      "dirs": len(sw["dirs"]), "locked": len(sw["locked"])}
+        for entry in sw["locked"]:
+            s["alerts"].append(f"worktree dir still locked: {entry}")
+    except Exception as exc:
+        s["sweep"] = {"error": str(exc)[:200]}
 
     if dbmod.running_pids(con):
         s["busy"] = True
