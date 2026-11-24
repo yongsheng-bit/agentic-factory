@@ -158,6 +158,31 @@ class TestQueue(unittest.TestCase):
         self.assertEqual(dbmod.mark_stale_running_failed(con, older_than=60), 1)
         self.assertEqual(dbmod.get_ticket(con, tid)["status"], "escalated")
 
+    def test_reaper_escalates_ticket_orphaned_without_open_run(self):
+        """A ticket left `running` with no open run is a board deadlock: the
+        run row was closed (or never opened) while the ticket kept its
+        status, so the run-level reap alone never fires."""
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "orphaned mid-worker")
+        con.execute("UPDATE tickets SET status='running', updated_at=1 WHERE id=?",
+                    (tid,))
+        self.assertEqual(dbmod.mark_stale_running_failed(con, older_than=60), 1)
+        self.assertEqual(dbmod.get_ticket(con, tid)["status"], "escalated")
+        rows = con.execute("SELECT why FROM escalations WHERE ticket_id=?",
+                           (tid,)).fetchall()
+        self.assertEqual([r["why"] for r in rows], ["orphaned: no open run"])
+
+    def test_reaper_leaves_ticket_with_open_recent_run_alone(self):
+        con = fresh_db(self)
+        tid = dbmod.add_ticket(con, "live worker")
+        con.execute("UPDATE tickets SET status='running' WHERE id=?", (tid,))
+        dbmod.start_run(con, tid, 1)
+        self.assertEqual(dbmod.mark_stale_running_failed(con, older_than=60), 0)
+        self.assertEqual(dbmod.get_ticket(con, tid)["status"], "running")
+        self.assertEqual(
+            con.execute("SELECT COUNT(*) FROM runs WHERE status='running'"
+                        ).fetchone()[0], 1)
+
     def test_escalate_survives_its_own_db_call(self):
         con = fresh_db(self)
         tid = dbmod.add_ticket(con, "doomed")
