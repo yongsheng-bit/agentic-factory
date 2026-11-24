@@ -374,7 +374,13 @@ def running_pids(con):
 
 
 def mark_stale_running_failed(con, older_than=3600):
-    """Reap runs whose worker died without closing them out."""
+    """Reap runs whose worker died without closing them out.
+
+    A killed tick can also leave the ticket itself stranded: status stays
+    `running` while its run row was closed, or was never opened. Scanning
+    only open runs would report reaped=0 forever and keep the board busy,
+    so tickets orphaned from any open run are escalated on the same cutoff.
+    """
     cutoff = time.time() - older_than
     rows = con.execute(
         "SELECT id, ticket_id FROM runs WHERE status='running' AND started_at < ?",
@@ -383,4 +389,13 @@ def mark_stale_running_failed(con, older_than=3600):
         end_run(con, int(r["id"]), "timeout", 0.0, "reaped by watchdog")
         con.execute("UPDATE tickets SET status='escalated', updated_at=? WHERE id=?",
                     (time.time(), int(r["ticket_id"])))
-    return len(rows)
+        add_escalation(con, int(r["ticket_id"]), "reaped by watchdog")
+    orphans = con.execute(
+        "SELECT id FROM tickets WHERE status='running' AND updated_at < ?"
+        " AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.ticket_id = tickets.id"
+        " AND runs.status='running')", (cutoff,)).fetchall()
+    for t in orphans:
+        con.execute("UPDATE tickets SET status='escalated', updated_at=? WHERE id=?",
+                    (time.time(), int(t["id"])))
+        add_escalation(con, int(t["id"]), "orphaned: no open run")
+    return len(rows) + len(orphans)
