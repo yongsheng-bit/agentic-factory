@@ -11,6 +11,7 @@ import time
 
 from . import __version__
 from . import agent as agentmod
+from . import audit as auditmod
 from . import babysit as babysitmod
 from . import blast as blastmod
 from . import board as boardmod
@@ -331,6 +332,22 @@ def cmd_gate(args):
     sys.exit(0 if res["ok"] else 1)
 
 
+def cmd_audit(args):
+    cfg, _ = _open(args)
+    root = args.path or cfg["repo"]
+    findings = auditmod.audit_repo(root)
+    if args.json:
+        print(json.dumps(findings, indent=2))
+    elif not findings:
+        print(f"audit: clean ({root})")
+    else:
+        print(f"audit: {root}")
+        for f in findings:
+            print(f"  {f['kind']:<16} {f['file']}:{f['line']}  {f['detail']}")
+        print(f"{len(findings)} finding(s) - prune or enforce, then re-run")
+    sys.exit(0 if not findings else 2)
+
+
 def cmd_blast(args):
     cfg, _ = _open(args)
     target = args.path or cfg["repo"]
@@ -457,6 +474,12 @@ def build_parser():
     s.add_argument("--python")
     s.set_defaults(fn=cmd_canary)
     s = a.add_parser("gate"); s.add_argument("--path"); s.set_defaults(fn=cmd_gate)
+    s = a.add_parser("audit",
+                     help="prompt audit: instruction-file bloat, unenforced "
+                          "rules, and tree-wide secrets; exit 2 on findings")
+    s.add_argument("--path")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_audit)
     s = a.add_parser("blast"); s.add_argument("--path"); s.set_defaults(fn=cmd_blast)
     a.add_parser("version").set_defaults(fn=cmd_version)
     return p
