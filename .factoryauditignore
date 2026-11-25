@@ -1,0 +1,6 @@
+# Secret-scan fixtures and credential plumbing: the fake AWS key the
+# secret-gate tests carry on purpose, and the code that reads git
+# credentials. Triaged once so real findings stay readable.
+tests/
+factory/board.py
+factory/worktree.py
