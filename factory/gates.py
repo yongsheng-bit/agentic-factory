@@ -36,20 +36,39 @@ def _which(cmd):
     return shutil.which(cmd)
 
 
+ZERO_TEST_MARKERS = [
+    re.compile(r"Ran 0 tests"),
+    re.compile(r"no tests (ran|were collected)"),
+]
+
+
 def run_tests(workdir, command, env=None, timeout_s=600):
     """Run the repo's own test suite against the worktree before a PR opens.
 
     The agent's finish() is a claim; the suite is evidence. A PR whose tests
     fail wastes exactly the human attention the gates exist to conserve -
     measured: the first petro PR shipped six tests that never passed, on any
-    platform. Returns (ok, output).
+    platform.
+
+    Exit-code discipline: any non-zero exit goes back to the agent (exit 2
+    is the canonical block-and-fix signal), and exit 0 is green only when
+    the run proves tests executed. A suite reporting zero tests collected -
+    the deleted-test false green - is not evidence of anything.
+    Returns (ok, output).
     """
     try:
         proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
                               capture_output=True, text=True, timeout=timeout_s)
-        return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
     except subprocess.TimeoutExpired:
         return False, f"test command timed out after {timeout_s}s"
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode == 0:
+        for rx in ZERO_TEST_MARKERS:
+            if rx.search(out):
+                return False, out + "\ntest command exited 0 but ran no tests: " \
+                                    "a green run with zero tests is not evidence"
+        return True, out
+    return False, out
 
 
 def added_lines(diff):

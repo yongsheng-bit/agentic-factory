@@ -1944,6 +1944,35 @@ class TestRunTestsGate(unittest.TestCase):
         self.assertFalse(ok)
         self.assertIn("timed out", out)
 
+    def test_exit_two_is_a_block_not_a_pass(self):
+        """Exit 2 is the canonical 'go back and fix' signal; it must never
+        read as done."""
+        import tempfile
+        d = tempfile.mkdtemp()
+        ok, out = gates.run_tests(d, f'"{sys.executable}" -c "import sys; sys.exit(2)"')
+        self.assertFalse(ok)
+
+    def test_zero_test_suite_is_not_green(self):
+        """A suite that exits 0 having run zero tests is a deleted-test
+        false green: green must mean tests actually ran."""
+        import tempfile
+        d = tempfile.mkdtemp()
+        ok, out = gates.run_tests(
+            d, f'"{sys.executable}" -c "print(\'Ran 0 tests in 0.000s\')"')
+        self.assertFalse(ok)
+        self.assertIn("ran no tests", out)
+        ok, out = gates.run_tests(
+            d, f'"{sys.executable}" -c "print(\'no tests were collected\')"')
+        self.assertFalse(ok)
+        self.assertIn("ran no tests", out)
+
+    def test_green_suite_with_executed_tests_stays_green(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        ok, out = gates.run_tests(
+            d, f'"{sys.executable}" -c "print(\'Ran 3 tests in 0.010s\\\\nOK\')"')
+        self.assertTrue(ok)
+
 
 class TestChatBody(unittest.TestCase):
     @classmethod
