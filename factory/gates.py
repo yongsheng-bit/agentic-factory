@@ -12,6 +12,8 @@ import re
 import shutil
 import subprocess
 
+from . import sandbox
+
 SECRET_PATTERNS = [
     (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key id"),
     (re.compile(r"(?i)aws_secret_access_key\s*[:=]\s*['\"][A-Za-z0-9/+=]{30,}"), "AWS secret key"),
@@ -42,7 +44,7 @@ ZERO_TEST_MARKERS = [
 ]
 
 
-def run_tests(workdir, command, env=None, timeout_s=600):
+def run_tests(workdir, command, env=None, timeout_s=600, cfg=None):
     """Run the repo's own test suite against the worktree before a PR opens.
 
     The agent's finish() is a claim; the suite is evidence. A PR whose tests
@@ -50,19 +52,28 @@ def run_tests(workdir, command, env=None, timeout_s=600):
     measured: the first petro PR shipped six tests that never passed, on any
     platform.
 
+    With sandbox.enabled the suite runs in a no-network container: the
+    suite executes repository code, and a poisoned conftest is as
+    dangerous as a poisoned prompt.
+
     Exit-code discipline: any non-zero exit goes back to the agent (exit 2
     is the canonical block-and-fix signal), and exit 0 is green only when
     the run proves tests executed. A suite reporting zero tests collected -
     the deleted-test false green - is not evidence of anything.
     Returns (ok, output).
     """
-    try:
-        proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
-                              capture_output=True, text=True, timeout=timeout_s)
-    except subprocess.TimeoutExpired:
-        return False, f"test command timed out after {timeout_s}s"
-    out = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode == 0:
+    if sandbox.enabled(cfg):
+        rc, out = sandbox.run_suite(cfg, command, workdir,
+                                    timeout_s=timeout_s)
+    else:
+        try:
+            proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
+                                  capture_output=True, text=True, timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            return False, f"test command timed out after {timeout_s}s"
+        rc = proc.returncode
+        out = (proc.stdout or "") + (proc.stderr or "")
+    if rc == 0:
         for rx in ZERO_TEST_MARKERS:
             if rx.search(out):
                 return False, out + "\ntest command exited 0 but ran no tests: " \

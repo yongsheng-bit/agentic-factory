@@ -188,9 +188,13 @@ The agent's sandbox is what lets a cheap model near a real repo:
 **Honest limits.** This is a guardrail against a confused model, not a wall
 against a determined one: a program *given* a path can still resolve its way
 out, and a regex denylist cannot stop `python -c` from doing anything Python can
-do. The realistic attack is prompt injection from a file in the target repo. If
-you point this at a repository you care about, run the agent in a container with
-no network and no credentials — that is the only actual boundary. Cmd builtins
+do. The realistic attack is prompt injection from a file in the target repo —
+which is why the actual boundary is `factory/sandbox.py`: with `sandbox.enabled`
+the agent, the test suite, the mutants, the preview renderer and the canary all
+run in disposable containers (`docker build -t factory-agent:local .`), each
+with one worktree mounted, a fresh home, no credentials, and no network except
+the local LLM through a one-rule egress gate. The gates protect the diff; only
+the container protects the machine. Cmd builtins
 (`echo`, `dir`, `set`) do not work, by design.
 
 Because the model is local, `price_per_mtok_*` is set to API-equivalent
@@ -207,6 +211,39 @@ export LLM_MAX_STEPS=20 LLM_MAX_TOKENS=60000 LLM_TIMEOUT=300
 Cost is parsed from the agent's JSON output (`total_cost_usd`, or `usage`
 tokens x `price_per_mtok_*`). If an agent prints nothing parseable, cost is 0 —
 so put a real price in the config or watch `status` rather than trusting it.
+
+## Container sandbox
+
+`factory/sandbox.py` is the only boundary that protects the *machine* (the
+gates protect the diff). With `sandbox.enabled` every code-executing stage —
+the agent, the test suite, the mutants, the preview renderer, the canary —
+runs in a disposable container: one worktree mounted, fresh home, no
+credentials, `--read-only` rootfs, pids/memory caps, and no network except
+the local LLM through a one-rule egress gate container (internal Docker
+network, single TCP forward). Commits, pushes and PRs stay host-side, so an
+agent's worst day is a bad diff in a throwaway worktree.
+
+```bash
+docker build -t factory-agent:local .
+```
+
+```json
+"sandbox": {
+  "enabled": true,
+  "image": "factory-agent:local",
+  "network": "factory-llm",
+  "egress": {"network": "factory-llm", "gate_name": "factory-egress",
+             "listen": 8080, "target": "192.168.68.73:8080",
+             "llm_base": "http://factory-egress:8080/v1"},
+  "limits": {"memory": "2g", "cpus": 2, "pids": 256}
+}
+```
+
+`enabled: false` (the default) keeps every legacy path byte-identical.
+Never mount the home directory, the docker socket, or the factory sqlite db
+into an attempt container; the module only mounts the per-ticket worktree,
+the prompt file, `scripts/` (read-only), and explicit output dirs. Live
+smoke tests: `FACTORY_SANDBOX_LIVE=1 python -m unittest tests.test_sandbox`.
 
 ## Required repo setup (do not skip)
 

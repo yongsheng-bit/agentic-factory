@@ -19,6 +19,8 @@ import sys
 import tempfile
 import time
 
+from . import sandbox
+
 PROMPT_FILE_TOKEN = "{prompt_file}"
 PROMPT_TOKEN = "{prompt}"
 
@@ -357,7 +359,12 @@ def minimal_env(base=None, allow_extra=(), spec_env=None, env_extra=None):
 
 
 def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=None):
-    """Run one agent attempt. Returns dict(status, cost_usd, stdout, stderr, seconds, pid)."""
+    """Run one agent attempt. Returns dict(status, cost_usd, stdout, stderr, seconds, pid).
+
+    With sandbox.enabled the attempt runs inside a disposable container
+    (factory/sandbox.py): the agent sees one worktree, a fresh home, and
+    no network route except the LLM through the egress gate.
+    """
     spec = dict(spec)
     if timeout_s is None:
         timeout_s = int(spec.get("timeout_s", 1800))
@@ -369,6 +376,11 @@ def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=
         env_extra = {**(env_extra or {}), **cfg_env}
     env = minimal_env(allow_extra=allow_extra, spec_env=spec.get("env", {}) or {},
                       env_extra=env_extra)
+
+    container = None
+    if sandbox.enabled(cfg) and prompt_path:
+        argv, container, env = sandbox.wrap_agent_command(
+            cfg, spec, prompt, prompt_path, workdir, env)
 
     t0 = time.time()
     try:
@@ -387,6 +399,7 @@ def run(cfg, spec, prompt, workdir, prompt_path=None, timeout_s=None, env_extra=
         out, err = proc.communicate(timeout=timeout_s)
         status = "ok" if proc.returncode == 0 else "fail"
     except subprocess.TimeoutExpired:
+        sandbox.kill(container)
         _kill_tree(proc)
         try:
             out, err = proc.communicate(timeout=30)

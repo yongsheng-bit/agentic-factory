@@ -19,6 +19,7 @@ with enough mutants, never on a single survivor.
 import ast
 import subprocess
 
+from . import sandbox
 from .gates import added_lines
 
 OP_SWAPS = {
@@ -139,8 +140,13 @@ def plan(diff, read_file, max_mutants=12):
 
 
 def run_mutations(workdir, diff, command, env=None, max_mutants=12,
-                  min_score=0.5, timeout_s=120):
+                  min_score=0.5, timeout_s=120, cfg=None):
     """Mutate the diff's added lines and score how many the suite kills.
+
+    With sandbox.enabled each mutant suite run happens in a no-network
+    container: mutants are deliberately broken repository code executing
+    against the suite, the single scariest unguarded line before this
+    existed.
 
     Returns (ok, report). ok is False only with enough mutants to be
     confident (>= 3) and a kill rate below `min_score`; anything else -
@@ -158,6 +164,9 @@ def run_mutations(workdir, diff, command, env=None, max_mutants=12,
     mutants = plan(diff, read_file, max_mutants)
     if not mutants:
         return True, "mutation: no candidates in added lines (skipped)"
+    boxed = sandbox.enabled(cfg)
+    if boxed and not sandbox.probe(cfg):
+        return True, "mutation: sandbox unavailable (skipped)"
     killed, survived = 0, []
     for path, source, wanted, idx in mutants:
         try:
@@ -182,10 +191,15 @@ def run_mutations(workdir, diff, command, env=None, max_mutants=12,
         except OSError:
             continue
         try:
-            proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
-                                  capture_output=True, text=True,
-                                  timeout=timeout_s)
-            died = proc.returncode != 0
+            if boxed:
+                rc, _ = sandbox.run_suite(cfg, command, workdir,
+                                          timeout_s=timeout_s)
+                died = rc != 0
+            else:
+                proc = subprocess.run(command, shell=True, cwd=workdir, env=env,
+                                      capture_output=True, text=True,
+                                      timeout=timeout_s)
+                died = proc.returncode != 0
         except subprocess.TimeoutExpired:
             died = True
         finally:

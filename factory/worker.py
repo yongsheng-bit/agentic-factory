@@ -225,6 +225,12 @@ def _process_once(cfg, con, dry=False):
 
         diff_text = wt.diff_text(path, base=base_sha)
 
+        if "tests/test_harness.py" in diff_text:
+            keep_branch = False
+            return _escalate(con, ticket, cfg,
+                             "agent modified tests/test_harness.py "
+                             "(pinned contract file) - PR blocked")
+
         junk = None
         if "Binary files" in diff_text:
             junk = "diff contains binary files"
@@ -252,7 +258,8 @@ def _process_once(cfg, con, dry=False):
             ok, out = gates.run_tests(
                 path, test_cmd,
                 env=agentmod.minimal_env(
-                    env_extra=(cfg.get("agent") or {}).get("env")))
+                    env_extra=(cfg.get("agent") or {}).get("env")),
+                cfg=cfg)
             if not ok:
                 why = "tests failing:\n" + out[-1500:]
                 dbmod.bump_attempt(con, ticket["id"])
@@ -270,7 +277,8 @@ def _process_once(cfg, con, dry=False):
                 env=agentmod.minimal_env(
                     env_extra=(cfg.get("agent") or {}).get("env")),
                 max_mutants=int(mut_cfg.get("max_mutants", 12)),
-                min_score=float(mut_cfg.get("min_score", 0.5)))
+                min_score=float(mut_cfg.get("min_score", 0.5)),
+                cfg=cfg)
             if not mut_ok:
                 dbmod.bump_attempt(con, ticket["id"])
                 if dbmod.attempt_of(con, ticket["id"]) >= int(ticket["max_retries"]):

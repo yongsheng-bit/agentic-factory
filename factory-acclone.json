@@ -6,7 +6,7 @@
   "remote": "origin",
   "push": true,
   "keep_worktrees": false,
-  "daily_budget_usd": 10.0,
+  "daily_budget_usd": 100000.0,
   "agent": {
     "env": {
       "PATH": "C:\\Users\\David\\ac-clone-env\\Scripts;{PATH}"
@@ -21,9 +21,9 @@
       "env": {
         "LLM_BASE": "http://192.168.68.73:8080/v1",
         "LLM_MODEL": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
-        "LLM_MAX_STEPS": "32",
-        "LLM_MAX_TOKENS": "600000",
-        "LLM_MAX_CONTEXT": "100000",
+        "LLM_MAX_STEPS": "80",
+        "LLM_MAX_TOKENS": "2600000",
+        "LLM_MAX_CONTEXT": "120000",
         "LLM_DISABLE_THINKING": "1"
       },
       "price_per_mtok_in": 0.3,
@@ -39,9 +39,9 @@
       "env": {
         "LLM_BASE": "http://192.168.68.73:8080/v1",
         "LLM_MODEL": "qwen3.8-flash-next-unsloth-ud-iq4_xs",
-        "LLM_MAX_STEPS": "32",
-        "LLM_MAX_TOKENS": "600000",
-        "LLM_MAX_CONTEXT": "100000",
+        "LLM_MAX_STEPS": "40",
+        "LLM_MAX_TOKENS": "1200000",
+        "LLM_MAX_CONTEXT": "120000",
         "LLM_DISABLE_THINKING": "1"
       },
       "price_per_mtok_in": 0.3,
@@ -78,5 +78,22 @@
   },
   "preview": {
     "enabled": false
+  },
+  "sandbox": {
+    "enabled": false,
+    "image": "factory-agent:local",
+    "network": "factory-llm",
+    "egress": {
+      "network": "factory-llm",
+      "gate_name": "factory-egress",
+      "listen": 8080,
+      "target": "192.168.68.73:8080",
+      "llm_base": "http://factory-egress:8080/v1"
+    },
+    "limits": {
+      "memory": "2g",
+      "cpus": "2",
+      "pids": 256
+    }
   }
 }
