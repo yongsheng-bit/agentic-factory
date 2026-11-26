@@ -225,6 +225,12 @@ def _process_once(cfg, con, dry=False):
 
         diff_text = wt.diff_text(path, base=base_sha)
 
+        if "tests/test_harness.py" in diff_text:
+            keep_branch = False
+            return _escalate(con, ticket, cfg,
+                             "agent modified tests/test_harness.py "
+                             "(pinned contract file) - PR blocked")
+
         junk = None
         if "Binary files" in diff_text:
             junk = "diff contains binary files"

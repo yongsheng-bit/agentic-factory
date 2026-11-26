@@ -12,6 +12,21 @@ import subprocess
 import sys
 import time
 
+if os.name == "nt":
+    _orig_popen = subprocess.Popen
+
+    class _NoWindowPopen(_orig_popen):
+        """Task Scheduler runs this entry under pythonw: every console child
+        (python, gh, git) would otherwise flash its own window, so the
+        no-window flag is the process-wide default."""
+
+        def __init__(self, *args, **kwargs):
+            flags = kwargs.get("creationflags", 0)
+            kwargs["creationflags"] = flags | 0x08000000
+            super().__init__(*args, **kwargs)
+
+    subprocess.Popen = _NoWindowPopen
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG = os.path.join(ROOT, "logs", "tick.log")
 MAX_LOG = 1_000_000
