@@ -17,7 +17,7 @@ from . import blast as blastmod
 from . import board as boardmod
 from . import db as dbmod
 from . import gates, issues as issuesmod, sync as syncmod, tick as tickmod
-from . import worker, worktree as wt
+from . import sandbox, worker, worktree as wt
 
 
 def _open(args):
@@ -301,7 +301,10 @@ def cmd_canary(args):
 
     Executes factory/canary.py under the configured venv python (the one
     with pymupdf) so the factory's own interpreter needs no third-party
-    imports. Exit code is the canary's: 0 pass, 1 fail, 2 setup problem.
+    imports, or inside the sandbox container when sandbox.enabled: the
+    canary executes merged repository code against real data, so the box
+    gets read-only mounts and no network. Exit code is the canary's:
+    0 pass, 1 fail, 2 setup problem.
     """
     cfg, _ = _open(args)
     can = cfg.get("canary") or {}
@@ -309,10 +312,24 @@ def cmd_canary(args):
     data = args.data or can.get("data")
     truth = args.truth or can.get("truth")
     repo = args.repo or cfg["repo"]
-    if not (py and data and truth):
+    boxed = sandbox.enabled(cfg)
+    if not (data and truth) or (not boxed and not py):
         print("canary needs config {python, data, truth} or the matching "
               "flags (see factory/canary.py docstring)")
         sys.exit(2)
+    if boxed:
+        rc, out = sandbox.run_container(
+            cfg, ["python3", "/opt/factory/factory/canary.py",
+                  "--repo", "/repo", "--data", "/data",
+                  "--truth", f"/truth/{os.path.basename(truth)}"],
+            mounts=[(repo, "/repo", "ro"),
+                    (data, "/data", "ro"),
+                    (os.path.dirname(os.path.abspath(truth)), "/truth", "ro"),
+                    (sandbox.REPO_ROOT, "/opt/factory", "ro")],
+            network="none", timeout_s=600,
+            image=sandbox.scfg(cfg).get("canary_image"))
+        print(out, end="")
+        sys.exit(rc)
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           "canary.py")
     proc = subprocess.run([py, script, "--repo", repo, "--data", data,

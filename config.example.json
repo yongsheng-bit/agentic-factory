@@ -74,5 +74,22 @@
       "summary.html"
     ],
     "fixture_days": 21
+  },
+  "sandbox": {
+    "enabled": false,
+    "image": "factory-agent:local",
+    "network": "factory-llm",
+    "egress": {
+      "network": "factory-llm",
+      "gate_name": "factory-egress",
+      "listen": 8080,
+      "target": "192.168.68.73:8080",
+      "llm_base": "http://factory-egress:8080/v1"
+    },
+    "limits": {
+      "memory": "2g",
+      "cpus": "2",
+      "pids": 256
+    }
   }
 }

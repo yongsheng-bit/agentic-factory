@@ -21,6 +21,8 @@ import os
 import subprocess
 import sys
 
+from . import sandbox
+
 FIXTURE_GRADES = ("REGULAR", "PLUS", "SUPREME", "DIESEL", "ULTRA94")
 FIXTURE_DISPENSERS = ("D1", "D2", "D3", "D4", "D5", "D6")
 DEFAULT_GUI_PATHS = ("dashboard/",)
@@ -71,14 +73,31 @@ def render_pages(worktree, cfg, out_dir):
     """Render the app's pages from fixture data; return their paths.
 
     Runs the customer CLI from the attempt worktree with the preview
-    python (the venv that has the project's test extras). Raises on any
-    nonzero exit; the caller treats that as "no pictures".
+    python (the venv that has the project's test extras), or inside the
+    sandbox container when sandbox.enabled. Raises on any nonzero exit;
+    the caller treats that as "no pictures".
     """
     preview = cfg.get("preview") or {}
     python = preview.get("python") or sys.executable
     os.makedirs(out_dir, exist_ok=True)
     csv_path = write_fixture_csv(out_dir, int(preview.get("fixture_days", 21)))
     pages = preview.get("pages") or DEFAULT_PAGES
+    if sandbox.enabled(cfg):
+        args = ["python3", "-m", preview.get("module", "dashboard"),
+                "--csv", f"{sandbox.OUT_MOUNT}/fixture.csv",
+                "--out", f"{sandbox.OUT_MOUNT}/{pages[0]}"]
+        if len(pages) > 1:
+            args += ["--summary", f"{sandbox.OUT_MOUNT}/{pages[1]}"]
+        rc, out = sandbox.run_container(
+            cfg, args, workdir=worktree,
+            mounts=[(out_dir, sandbox.OUT_MOUNT, "rw")],
+            env={"PYTHONPATH": sandbox.WORK_MOUNT},
+            network="none", timeout_s=120,
+            image=sandbox.scfg(cfg).get("preview_image"))
+        if rc != 0:
+            raise RuntimeError("preview render failed (%d): %s"
+                               % (rc, out[:300]))
+        return [os.path.join(out_dir, page) for page in pages]
     args = [python, "-m", preview.get("module", "dashboard"),
             "--csv", csv_path, "--out", os.path.join(out_dir, pages[0])]
     if len(pages) > 1:
@@ -118,13 +137,28 @@ print("\\n".join(made))
 """
 
 
-def screenshot_pages(html_paths, out_dir, python=None):
+def screenshot_pages(html_paths, out_dir, python=None, cfg=None):
     """Full-page Chromium screenshots via the preview python subprocess.
 
     The factory is stdlib-only, so playwright is never imported here:
-    the screenshots run inside the customer venv (which has playwright
-    and its Chromium) and only the resulting PNG paths cross back.
+    the screenshots run inside the sandbox container (whose image carries
+    playwright and Chromium) or inside the customer venv, and only the
+    resulting PNG paths cross back.
     """
+    if sandbox.enabled(cfg):
+        inner = ["python3", "-c", SCREENSHOT_SCRIPT, sandbox.OUT_MOUNT]
+        inner += [f"{sandbox.OUT_MOUNT}/{os.path.basename(p)}"
+                  for p in html_paths]
+        rc, out = sandbox.run_container(
+            cfg, inner, mounts=[(out_dir, sandbox.OUT_MOUNT, "rw")],
+            network="none", timeout_s=180,
+            image=sandbox.scfg(cfg).get("preview_image"))
+        if rc != 0:
+            raise RuntimeError("screenshot failed: %s" % (out[-300:],))
+        made = [os.path.join(out_dir,
+                             os.path.splitext(os.path.basename(p))[0] + ".png")
+                for p in html_paths]
+        return [p for p in made if os.path.exists(p)]
     proc = subprocess.run([python or sys.executable, "-c", SCREENSHOT_SCRIPT,
                            out_dir] + list(html_paths),
                           timeout=180, capture_output=True, text=True,
@@ -188,7 +222,7 @@ def run_preview(worktree, diff_text, cfg, pr_url, out_dir=None):
             import tempfile
             out_dir = tempfile.mkdtemp(prefix="factory-preview-")
         pngs = screenshot_pages(render_pages(worktree, cfg, out_dir), out_dir,
-                                python=preview.get("python"))
+                                python=preview.get("python"), cfg=cfg)
         if not pngs:
             return False
         ok = post_comment(pr_url, comment_body(pngs), pngs, worktree,
