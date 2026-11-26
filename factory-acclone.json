@@ -80,7 +80,7 @@
     "enabled": false
   },
   "sandbox": {
-    "enabled": false,
+    "enabled": true,
     "image": "factory-agent:local",
     "network": "factory-llm",
     "egress": {
