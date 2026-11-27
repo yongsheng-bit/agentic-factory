@@ -17,7 +17,7 @@ from . import blast as blastmod
 from . import board as boardmod
 from . import db as dbmod
 from . import gates, issues as issuesmod, sync as syncmod, tick as tickmod
-from . import sandbox, worker, worktree as wt
+from . import sandbox, wake as wakemod, worker, worktree as wt
 
 
 def _open(args):
@@ -25,6 +25,13 @@ def _open(args):
     con = dbmod.connect(cfg["db"])
     dbmod.init(con)
     return cfg, con
+
+
+def _wake(cfg, con, cfg_path):
+    """Quiet no-op when wake is disabled; one honest line otherwise."""
+    status = wakemod.wake(cfg, con, cfg_path)
+    if status != "wake disabled":
+        print(f"wake: {status}")
 
 
 def cmd_init(args):
@@ -77,7 +84,7 @@ def cmd_add(args):
     if not args.title:
         print("add needs a title, or --from-file FILE")
         sys.exit(2)
-    _, con = _open(args)
+    cfg, con = _open(args)
     tid = dbmod.add_ticket(con, args.title, args.body or "", source=args.source,
                            ref=args.ref, budget_usd=args.budget,
                            max_retries=args.retries, tier=args.tier)
@@ -85,11 +92,12 @@ def cmd_add(args):
         dbmod.set_blast(con, tid, args.blast, "set manually")
     route = f" (pinned to {args.tier} tier)" if args.tier else ""
     print(f"queued ticket {tid}{route}")
+    _wake(cfg, con, args.config)
 
 
 def _add_from_file(args):
     """Bulk import from JSONL: one ticket id per line, or nothing at all."""
-    _, con = _open(args)
+    cfg, con = _open(args)
     try:
         with open(args.from_file, encoding="utf-8") as fh:
             text = fh.read()
@@ -111,6 +119,8 @@ def _add_from_file(args):
         raise
     for tid in ids:
         print(tid)
+    if ids:
+        _wake(cfg, con, args.config)
 
 
 def cmd_list(args):
@@ -170,9 +180,11 @@ def cmd_runs(args):
 
 def cmd_retry(args):
     """Requeue a finished ticket without touching its attempt count."""
-    _, con = _open(args)
+    cfg, con = _open(args)
     ok, msg = dbmod.retry_ticket(con, args.id)
     print(msg)
+    if ok:
+        _wake(cfg, con, args.config)
     sys.exit(0 if ok else 1)
 
 
@@ -204,9 +216,10 @@ def cmd_pause(args):
 
 
 def cmd_resume(args):
-    _, con = _open(args)
+    cfg, con = _open(args)
     dbmod.set_paused(con, False)
     print("resumed")
+    _wake(cfg, con, args.config)
 
 
 def cmd_once(args):
@@ -223,6 +236,18 @@ def cmd_watchdog(args):
     cfg, con = _open(args)
     n = worker.watchdog(cfg, con, max_age_s=args.older_than, kill=args.kill)
     print(f"reaped {n} stale run(s)")
+
+
+def cmd_wake(args):
+    """On-demand wake: the same decision the add/retry/resume hooks make."""
+    cfg, con = _open(args)
+    print(f"wake: {wakemod.wake(cfg, con, args.config)}")
+
+
+def cmd_watch(args):
+    cfg, con = _open(args)
+    wakemod.watch(cfg, con, args.config, gh_path=args.gh, label=args.label,
+                  interval=args.interval, once=args.once)
 
 
 def cmd_sync(args):
@@ -442,6 +467,9 @@ def build_parser():
     s = a.add_parser("retry"); s.add_argument("id", type=int)
     s.set_defaults(fn=cmd_retry)
 
+    a.add_parser("wake", help="fire a tick now if the queue has work and "
+                              "the engine is idle").set_defaults(fn=cmd_wake)
+
     s = a.add_parser("tier"); s.add_argument("id", type=int)
     s.add_argument("tier", choices=["cheap", "strong", "auto"],
                    help="pin the model tier, or auto to let the router decide")
@@ -458,6 +486,15 @@ def build_parser():
 
     s = a.add_parser("watchdog"); s.add_argument("--older-than", type=int, default=3600)
     s.add_argument("--kill", action="store_true"); s.set_defaults(fn=cmd_watchdog)
+
+    s = a.add_parser("watch", help="import labelled issues and wake the "
+                                   "factory on new tickets")
+    s.add_argument("--interval", type=int, default=30,
+                   help="seconds between beats (loop mode)")
+    s.add_argument("--once", action="store_true",
+                   help="single beat, for schedulers; no state needed")
+    s.add_argument("--label", default="factory")
+    s.add_argument("--gh"); s.set_defaults(fn=cmd_watch)
 
     s = a.add_parser("tick", help="unattended cycle: reap, sync, drain, alert")
     s.add_argument("--max", type=int, default=2, help="max tickets per tick")

@@ -107,6 +107,9 @@ def init(con: sqlite3.Connection) -> None:
                     " NOT NULL DEFAULT 0")
     con.execute("INSERT OR IGNORE INTO control (id, paused) VALUES (1, 0)")
 
+    con.execute("CREATE UNIQUE INDEX IF NOT EXISTS tickets_issue_number_uidx"
+                " ON tickets(issue_number)")
+
 
 
 def add_ticket(con, title, body="", source="manual", ref=None,

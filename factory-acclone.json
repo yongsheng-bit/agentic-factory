@@ -103,5 +103,8 @@
   },
   "unslop": {
     "enabled": true
+  },
+  "wake": {
+    "enabled": true
   }
 }

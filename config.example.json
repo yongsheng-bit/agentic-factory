@@ -103,5 +103,9 @@
     "enabled": false,
     "max_edits": 8,
     "diff_cap": 12000
+  },
+  "wake": {
+    "enabled": true,
+    "_note": "Event-driven intake: add/retry/resume fire a tick immediately, and the per-minute watch task (scripts/watch_task.py) imports labelled issues and wakes on new tickets. Set false to stay poll-only."
   }
 }

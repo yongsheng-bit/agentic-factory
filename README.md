@@ -86,6 +86,8 @@ Every command takes the global `-c/--config` (default `$FACTORY_CONFIG`, else
 | `tick` | `--max`, `--gh`, `--no-board`, `--json` | **Unattended cycle:** reap stale runs, sync PR state from GitHub, drain up to `--max` tickets, update the project board, print one line. Safe to cron; a busy engine makes it a no-op |
 | `board` | `--dry` | Push ticket statuses to the GitHub project board columns |
 | `import-issues` | `--gh`, `--label` | Import open GitHub issues with a label as tickets (idempotent) |
+| `wake` | — | Fire a tick now if the queue has work and the engine is idle; `add`, `retry` and `resume` do this automatically when `wake.enabled` |
+| `watch` | `--interval`, `--once`, `--label`, `--gh` | Import labelled issues and wake the factory on new tickets; `--once` is the stateless per-minute scheduler beat (`scripts/watch_task.py`) |
 | `sync` | `--gh` | **Read PR state back** from GitHub into the queue: merged/closed, who merged, `approved` vs `admin-bypass`. `--gh` overrides the `gh` binary path |
 | `babysit` | `--force`, `--gh` | **Answer review comments** on open PRs: one agent round per PR on its own branch, push the fix or the refusal, reply in the thread. Runs inside `tick`; `--force` runs it once even when disabled in config |
 | `canary` | `--python`, `--data`, `--truth`, `--repo` | Replay the merged parser against real receipts vs a ground-truth CSV, run under the *customer's* venv so the factory stays stdlib-only. Exit 0 pass / 1 fail / 2 setup |

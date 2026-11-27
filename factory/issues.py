@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 import subprocess
 
 from . import db as dbmod, worktree as wt
@@ -74,9 +75,17 @@ def import_issues(cfg, con, gh_path=None, label="factory"):
         if have:
             skipped.append((it["number"], int(have["id"])))
             continue
-        tid = dbmod.add_ticket(con, it["title"], it["body"], source="github-issue",
-                               ref=f"#{it['number']}", tier=it["tier"],
-                               issue_number=it["number"])
+        try:
+            tid = dbmod.add_ticket(con, it["title"], it["body"],
+                                   source="github-issue",
+                                   ref=f"#{it['number']}", tier=it["tier"],
+                                   issue_number=it["number"])
+        except sqlite3.IntegrityError:
+            have = con.execute(
+                "SELECT id FROM tickets WHERE issue_number=?",
+                (it["number"],)).fetchone()
+            skipped.append((it["number"], int(have["id"])))
+            continue
         imported.append((it["number"], tid))
     con.commit()
     return slug, imported, skipped
