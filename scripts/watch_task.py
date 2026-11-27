@@ -47,7 +47,9 @@ def main():
         if tok:
             env["FACTORY_GH_TOKEN"] = tok
     with open(LOG, "a", encoding="utf-8") as fh:
-        fh.write("\n=== %s ===\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+        fh.write("\n=== %s token=%s ===\n" % (
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            "yes" if env.get("FACTORY_GH_TOKEN") else "NO"))
         for name in CONFIGS:
             cfg_path = os.path.join(ROOT, name)
             if not os.path.exists(cfg_path) or not wake_enabled(cfg_path):
