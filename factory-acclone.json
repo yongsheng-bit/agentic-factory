@@ -68,7 +68,11 @@
   "webhook_url": "env:FACTORY_WEBHOOK",
   "webhook_format": "discord",
   "review": {
-    "enabled": true
+    "enabled": true,
+    "loop": {
+      "enabled": true,
+      "max_rounds": 1
+    }
   },
   "babysit": {
     "enabled": true
@@ -77,7 +81,8 @@
     "enabled": true
   },
   "preview": {
-    "enabled": false
+    "enabled": false,
+    "video": true
   },
   "sandbox": {
     "enabled": true,
@@ -95,5 +100,8 @@
       "cpus": "2",
       "pids": 256
     }
+  },
+  "unslop": {
+    "enabled": true
   }
 }

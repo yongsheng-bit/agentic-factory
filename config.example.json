@@ -20,7 +20,12 @@
   },
   "review": {
     "_note": "Backpressure: the factory stops claiming work while this many PRs await your review. Omit for no cap.",
-    "max_pending_reviews": 3
+    "max_pending_reviews": 3,
+    "_loop_note": "loop: while the reviewer returns concerns, run capped fix rounds (max_rounds) with the notes fed back, re-run the suite, re-review. Signal only - never blocks the merge. The review section may name a different engine than the writer; that independence is the point.",
+    "loop": {
+      "enabled": false,
+      "max_rounds": 1
+    }
   },
   "babysit": {
     "_note": "Answer human review comments on open PRs: a tick runs one agent round on the PR's own branch, pushes the fix or the refusal, and replies in the thread. Off by default.",
@@ -73,7 +78,8 @@
       "index.html",
       "summary.html"
     ],
-    "fixture_days": 21
+    "fixture_days": 21,
+    "video": false
   },
   "sandbox": {
     "enabled": false,
@@ -91,5 +97,11 @@
       "cpus": "2",
       "pids": 256
     }
+  },
+  "unslop": {
+    "_note": "Post-green, pre-PR mechanical cleanup: the engine proposes exact-match deletions/replacements of slop in the diff (never tests/), they are applied mechanically, and kept only if the suite still passes. Engine falls back to the strong agent tier; set base_url/model/api_key to judge with a different model.",
+    "enabled": false,
+    "max_edits": 8,
+    "diff_cap": 12000
   }
 }

@@ -16,9 +16,11 @@ from factory import cli as climod
 from factory import db as dbmod
 from factory import gates
 from factory import mutate as mutatemod
+from factory import preview as previewmod
 from factory import refine as refinemod
 from factory import review as reviewmod
 from factory import sync as syncmod
+from factory import unslop as unslopmod
 from factory import worker as workermod
 from factory import worktree
 
@@ -340,7 +342,7 @@ class TestAIReviewer(unittest.TestCase):
     def test_parse_verdict_accepts_both_verdicts(self):
         self.assertEqual(
             reviewmod._parse_verdict('{"verdict": "approve", "notes": "ok"}'),
-            ("approve", "ok"))
+            ("approve", "ok", None))
         concerns = reviewmod._parse_verdict(
             'noise {"verdict": "CONCERNS", "notes": "dup logic"} noise')
         self.assertEqual((concerns or ("", ""))[0], "concerns")
@@ -353,21 +355,151 @@ class TestAIReviewer(unittest.TestCase):
     def test_parse_verdict_survives_stray_braces_and_fences(self):
         fenced = '```json\n{"verdict": "approve", "notes": "ok"}\n```'
         self.assertEqual(reviewmod._parse_verdict(fenced),
-                         ("approve", "ok"))
+                         ("approve", "ok", None))
         stray = 'config {a: 1} then {"verdict": "concerns", "notes": "dup"}'
         self.assertEqual(reviewmod._parse_verdict(stray),
-                         ("concerns", "dup"))
+                         ("concerns", "dup", None))
+
+    def test_parse_verdict_reads_and_clamps_score(self):
+        blob = '{"verdict": "approve", "score": 4, "notes": "ok"}'
+        self.assertEqual(reviewmod._parse_verdict(blob),
+                         ("approve", "ok", 4))
+        high = '{"verdict": "concerns", "score": 9, "notes": "x"}'
+        self.assertEqual(reviewmod._parse_verdict(high),
+                         ("concerns", "x", 5))
+        junk = '{"verdict": "approve", "score": "gold", "notes": "x"}'
+        self.assertEqual(reviewmod._parse_verdict(junk),
+                         ("approve", "x", None))
 
     def test_review_disabled_by_default(self):
         ticket = {"id": 1, "title": "t", "body": ""}
         self.assertEqual(reviewmod.review_diff({}, ticket, "diff"),
-                         (None, "review disabled"))
+                         (None, "review disabled", None))
 
     def test_review_without_engine_config(self):
         ticket = {"id": 1, "title": "t", "body": ""}
         cfg = {"review": {"enabled": True}}
         self.assertEqual(reviewmod.review_diff(cfg, ticket, "diff"),
-                         (None, "review not configured"))
+                         (None, "review not configured", None))
+
+
+class TestUnslop(unittest.TestCase):
+    def _worktree(self, files):
+        import shutil
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for rel, text in files.items():
+            full = os.path.join(root, rel)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as fh:
+                fh.write(text)
+        return root
+
+    def test_parse_edits_filters_bad_items(self):
+        reply = json.dumps({"edits": [
+            {"file": "a.py", "find": "x", "replace": ""},
+            {"file": "", "find": "x", "replace": ""},
+            {"file": "a.py", "find": "", "replace": ""},
+            {"file": "a.py", "find": "y", "replace": None},
+        ]})
+        self.assertEqual(unslopmod.parse_edits(reply),
+                         [{"file": "a.py", "find": "x", "replace": ""}])
+        self.assertEqual(unslopmod.parse_edits("no json here"), [])
+
+    def test_reject_reason_blocks_tests_escapes_and_ambiguity(self):
+        root = self._worktree({"a.py": "dup\ndup\n", "tests/test_b.py": "x\n"})
+        self.assertEqual(
+            unslopmod._reject_reason(root, {"file": "a.py", "find": "dup"}),
+            "find text does not match exactly once")
+        self.assertEqual(
+            unslopmod._reject_reason(root,
+                                     {"file": "tests/test_b.py", "find": "x"}),
+            "edits to tests are never allowed")
+        self.assertEqual(
+            unslopmod._reject_reason(root,
+                                     {"file": "../outside.py", "find": "x"}),
+            "path escapes the worktree")
+        self.assertIsNone(
+            unslopmod._reject_reason(root,
+                                     {"file": "a.py", "find": "dup\ndup"}))
+
+    def test_clean_measures_final_diff_against_base_not_engine_url(self):
+        root = self._worktree({"a.py": "keep = 1\nslop = 2\n"})
+        cfg = {"unslop": {"enabled": True,
+                          "base_url": "http://engine:8080/v1",
+                          "model": "m"}}
+        seen = {}
+
+        def fake_chat(*args, **kwargs):
+            return json.dumps({"edits": [{"file": "a.py",
+                                          "find": "slop = 2\n",
+                                          "replace": ""}]})
+
+        def fake_diff_text(path, base="HEAD", **kwargs):
+            seen["base"] = base
+            return "final diff"
+
+        with patch.object(unslopmod.llmclient, "chat", fake_chat), \
+             patch.object(unslopmod.gates, "run_tests",
+                          lambda *a, **k: (True, "")), \
+             patch.object(unslopmod.wt, "commit_all",
+                          lambda *a, **k: True), \
+             patch.object(unslopmod.wt, "diff_text", fake_diff_text):
+            diff, applied = unslopmod.clean(
+                cfg, {"id": 1, "title": "t"}, root, "orig diff",
+                "python -m unittest", base="abc123")
+        self.assertEqual(diff, "final diff")
+        self.assertEqual(seen.get("base"), "abc123")
+        self.assertEqual(len(applied), 1)
+
+    def test_clean_reverts_everything_when_suite_goes_red(self):
+        root = self._worktree({"a.py": "keep = 1\nslop = 2\n"})
+        cfg = {"unslop": {"enabled": True, "base_url": "http://e",
+                          "model": "m"}}
+        discarded = []
+
+        def fake_chat(*args, **kwargs):
+            return json.dumps({"edits": [{"file": "a.py",
+                                          "find": "slop = 2\n",
+                                          "replace": ""}]})
+
+        with patch.object(unslopmod.llmclient, "chat", fake_chat), \
+             patch.object(unslopmod.gates, "run_tests",
+                          lambda *a, **k: (False, "boom")), \
+             patch.object(unslopmod.wt, "discard",
+                          lambda p: discarded.append(p)):
+            diff, applied = unslopmod.clean(
+                cfg, {"id": 1, "title": "t"}, root, "orig diff",
+                "python -m unittest", base="abc123")
+        self.assertEqual(diff, "orig diff")
+        self.assertEqual(applied, [])
+        self.assertEqual(discarded, [root])
+
+    def test_clean_disabled_or_engineless_returns_original(self):
+        ticket = {"id": 1, "title": "t"}
+        self.assertEqual(unslopmod.clean({}, ticket, "/x", "d", "cmd"),
+                         ("d", []))
+        cfg = {"unslop": {"enabled": True}}
+        self.assertEqual(unslopmod.clean(cfg, ticket, "/x", "d", "cmd"),
+                         ("d", []))
+
+
+class TestPreviewVideo(unittest.TestCase):
+    def test_video_branch_wires_record_video_dir(self):
+        script = previewmod.screenshot_script(video=True)
+        self.assertIn("record_video_dir", script)
+        self.assertIn("record_video_size", script)
+        self.assertIn("VIDEO", script)
+        plain = previewmod.screenshot_script()
+        self.assertNotIn("record_video_dir", plain)
+        self.assertNotIn("VIDEO", plain)
+
+    def test_comment_body_lists_video_only_when_present(self):
+        body = previewmod.comment_body(["/tmp/a.png"], ["/tmp/a.webm"])
+        self.assertIn("![a](/tmp/a.png)", body)
+        self.assertIn("[walkthrough](/tmp/a.webm)", body)
+        plain = previewmod.comment_body(["/tmp/a.png"])
+        self.assertNotIn("walkthrough", plain)
 
 
 class TestRefinement(unittest.TestCase):

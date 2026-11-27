@@ -7,6 +7,11 @@ worktree, screenshots each page with real Chromium, and posts the images
 as a PR comment so the human reviewer sees what the change looks like
 before merging.
 
+With preview.video enabled the same Chromium session also records a
+walkthrough video (webm) of the pages loading, attached next to the
+screenshots: a screenshot proves the pixels, a video proves the
+interaction and the load.
+
 The preview is strictly best-effort: it runs after the PR is already
 open, and every failure path returns False so a missing Chromium or a
 broken gh call costs the reviewer pictures, never the ticket. Fixture
@@ -27,6 +32,7 @@ FIXTURE_GRADES = ("REGULAR", "PLUS", "SUPREME", "DIESEL", "ULTRA94")
 FIXTURE_DISPENSERS = ("D1", "D2", "D3", "D4", "D5", "D6")
 DEFAULT_GUI_PATHS = ("dashboard/",)
 DEFAULT_PAGES = ("index.html", "summary.html")
+VIEWPORT = {"width": 1280, "height": 900}
 
 
 def should_preview(diff_text, paths=DEFAULT_GUI_PATHS):
@@ -114,39 +120,75 @@ def render_pages(worktree, cfg, out_dir):
     return [os.path.join(out_dir, page) for page in pages]
 
 
-SCREENSHOT_SCRIPT = """
-import os
-import sys
-from playwright.sync_api import sync_playwright
+def screenshot_script(video=False):
+    """The Chromium script run inside the preview python or container.
 
-out_dir = sys.argv[1]
-made = []
-with sync_playwright() as pw:
-    browser = pw.chromium.launch()
-    page = browser.new_page(viewport={"width": 1280, "height": 900})
-    for html_path in sys.argv[2:]:
-        page.goto("file:///" + os.path.abspath(html_path).replace("\\\\", "/"))
-        page.wait_for_load_state("networkidle")
-        png = os.path.join(
-            out_dir,
-            os.path.splitext(os.path.basename(html_path))[0] + ".png")
-        page.screenshot(path=png, full_page=True)
-        made.append(png)
-    browser.close()
-print("\\n".join(made))
-"""
+    Built as a function so a test can assert the video branch actually
+    carries record_video_dir: a green preview with no video flag wired
+    is the silent no-op this repo has a scar about. Video mode opens a
+    browser CONTEXT (videos need a context, not a bare page), holds it
+    open across every page so the PR gets one walkthrough clip, and
+    prints VIDEO lines with the saved file's basename - the real name
+    is a playwright-generated hash, so the host must not derive it.
+    """
+    lines = [
+        "import os",
+        "import sys",
+        "from playwright.sync_api import sync_playwright",
+        "",
+        "out_dir = sys.argv[1]",
+        "made = []",
+        "with sync_playwright() as pw:",
+        "    browser = pw.chromium.launch()",
+        "    ctx_opts = {\"viewport\": %r}" % (VIEWPORT,),
+    ]
+    if video:
+        lines += [
+            "    ctx_opts[\"record_video_dir\"] = out_dir",
+            "    ctx_opts[\"record_video_size\"] = %r" % (VIEWPORT,),
+        ]
+    lines += [
+        "    ctx = browser.new_context(**ctx_opts)",
+        "    page = ctx.new_page()",
+        "    for html_path in sys.argv[2:]:",
+        "        page.goto(\"file:///\" + os.path.abspath(html_path)"
+        ".replace(\"\\\\\", \"/\"))",
+        "        page.wait_for_load_state(\"networkidle\")",
+        "        page.wait_for_timeout(300)",
+        "        png = os.path.join(",
+        "            out_dir,",
+        "            os.path.splitext(os.path.basename(html_path))[0] + \".png\")",
+        "        page.screenshot(path=png, full_page=True)",
+        "        made.append(png)",
+    ]
+    if video:
+        lines += [
+            "    video = page.video",
+            "    page.close()",
+            "    ctx.close()",
+            "    browser.close()",
+            "    if video is not None:",
+            "        print(\"VIDEO\\t\" + os.path.basename(video.path()))",
+        ]
+    else:
+        lines += ["    page.close()", "    ctx.close()", "    browser.close()"]
+    lines += ["print(\"\\n\".join(made))", ""]
+    return "\n".join(lines)
 
 
-def screenshot_pages(html_paths, out_dir, python=None, cfg=None):
-    """Full-page Chromium screenshots via the preview python subprocess.
+def screenshot_pages(html_paths, out_dir, python=None, cfg=None, video=False):
+    """Full-page Chromium screenshots (and optional video) via subprocess.
 
     The factory is stdlib-only, so playwright is never imported here:
     the screenshots run inside the sandbox container (whose image carries
     playwright and Chromium) or inside the customer venv, and only the
-    resulting PNG paths cross back.
+    resulting media paths cross back. Returns (png_paths, video_paths);
+    a missing video file after a successful run is tolerated - the
+    caller posts whatever media exists.
     """
+    script = screenshot_script(video=video)
     if sandbox.enabled(cfg):
-        inner = ["python3", "-c", SCREENSHOT_SCRIPT, sandbox.OUT_MOUNT]
+        inner = ["python3", "-c", script, sandbox.OUT_MOUNT]
         inner += [f"{sandbox.OUT_MOUNT}/{os.path.basename(p)}"
                   for p in html_paths]
         rc, out = sandbox.run_container(
@@ -158,20 +200,28 @@ def screenshot_pages(html_paths, out_dir, python=None, cfg=None):
         made = [os.path.join(out_dir,
                              os.path.splitext(os.path.basename(p))[0] + ".png")
                 for p in html_paths]
-        return [p for p in made if os.path.exists(p)]
-    proc = subprocess.run([python or sys.executable, "-c", SCREENSHOT_SCRIPT,
+        videos = [os.path.join(out_dir, line.split("\t", 1)[1])
+                  for line in (out or "").splitlines()
+                  if line.startswith("VIDEO\t")]
+        return ([p for p in made if os.path.exists(p)],
+                [p for p in videos if os.path.exists(p)])
+    proc = subprocess.run([python or sys.executable, "-c", script,
                            out_dir] + list(html_paths),
                           timeout=180, capture_output=True, text=True,
                           encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError("screenshot failed: %s"
                            % ((proc.stderr or "")[-300:]))
-    return [line.strip() for line in (proc.stdout or "").splitlines()
+    pngs = [line.strip() for line in (proc.stdout or "").splitlines()
             if line.strip().endswith(".png")]
+    videos = [os.path.join(out_dir, line.split("\t", 1)[1])
+              for line in (proc.stdout or "").splitlines()
+              if line.startswith("VIDEO\t")]
+    return pngs, [p for p in videos if os.path.exists(p)]
 
 
-def comment_body(png_paths):
-    """Markdown PR comment embedding each screenshot.
+def comment_body(png_paths, video_paths=()):
+    """Markdown PR comment embedding each screenshot and video.
 
     The factory marker is what tells babysit this is the factory's own
     voice and not review feedback; a preview comment without it would be
@@ -184,19 +234,28 @@ def comment_body(png_paths):
         name = os.path.splitext(os.path.basename(png))[0]
         lines.append("![%s](%s)" % (name, png))
         lines.append("")
+    if video_paths:
+        lines.append("**GUI walkthrough video** (one Chromium session "
+                     "loading every page):")
+        lines.append("")
+        for video in video_paths:
+            lines.append("[walkthrough](%s)" % (video,))
+            lines.append("")
     return "\n".join(lines)
 
 
-def post_comment(pr_url, body, png_paths, worktree, gh_path=None, token=None):
-    """Attach the screenshots to the PR as one comment. Returns True on ok."""
+def post_comment(pr_url, body, png_paths, worktree, gh_path=None, token=None,
+                 video_paths=()):
+    """Attach the screenshots (and video) to the PR as one comment."""
     from factory import worktree as wt
-    body_file = os.path.join(os.path.dirname(png_paths[0]), "preview.md")
+    media = list(png_paths) + list(video_paths)
+    body_file = os.path.join(os.path.dirname(media[0]), "preview.md")
     with open(body_file, "w", encoding="utf-8") as fh:
         fh.write(body)
     args = [wt._gh_binary(gh_path), "pr", "comment", pr_url,
             "--body-file", body_file]
-    for png in png_paths:
-        args += ["--attach", png]
+    for path in media:
+        args += ["--attach", path]
     proc = subprocess.run(args, cwd=worktree, timeout=300,
                           capture_output=True, text=True,
                           encoding="utf-8", errors="replace",
@@ -209,7 +268,8 @@ def run_preview(worktree, diff_text, cfg, pr_url, out_dir=None):
 
     Does nothing (returns False) when previewing is disabled, the diff
     touches no GUI files, or any step fails - the PR is already open and
-    the reviewer simply gets no pictures.
+    the reviewer simply gets no pictures. A video failure never costs
+    the screenshots: the script is retried once without recording.
     """
     preview = cfg.get("preview") or {}
     if not preview.get("enabled") or not pr_url:
@@ -221,15 +281,27 @@ def run_preview(worktree, diff_text, cfg, pr_url, out_dir=None):
         if out_dir is None:
             import tempfile
             out_dir = tempfile.mkdtemp(prefix="factory-preview-")
-        pngs = screenshot_pages(render_pages(worktree, cfg, out_dir), out_dir,
-                                python=preview.get("python"), cfg=cfg)
+        html = render_pages(worktree, cfg, out_dir)
+        pngs, videos = [], []
+        try:
+            pngs, videos = screenshot_pages(html, out_dir,
+                                            python=preview.get("python"),
+                                            cfg=cfg,
+                                            video=bool(preview.get("video")))
+        except Exception:
+            if not preview.get("video"):
+                raise
+            pngs, videos = screenshot_pages(html, out_dir,
+                                            python=preview.get("python"),
+                                            cfg=cfg, video=False)
         if not pngs:
             return False
-        ok = post_comment(pr_url, comment_body(pngs), pngs, worktree,
+        ok = post_comment(pr_url, comment_body(pngs, videos), pngs, worktree,
                           gh_path=cfg.get("gh_path"),
-                          token=cfg.get("gh_token"))
-        print("gui preview: %s (%d images)" % ("posted" if ok else "FAILED",
-                                               len(pngs)), flush=True)
+                          token=cfg.get("gh_token"), video_paths=videos)
+        print("gui preview: %s (%d images, %d videos)"
+              % ("posted" if ok else "FAILED", len(pngs), len(videos)),
+              flush=True)
         return ok
     except Exception as exc:
         print("gui preview skipped: %s" % (exc,), flush=True)

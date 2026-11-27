@@ -293,6 +293,19 @@ def checkout(root, branch):
     return path, branch
 
 
+def discard(path):
+    """Throw away every uncommitted change in a worktree.
+
+    The orchestrator's undo button for post-commit passes (unslop, judge
+    fix rounds): the agent's work is already committed, so anything in
+    the working tree at this point was written by the factory itself and
+    is safe to destroy. Tracked files are restored, untracked files -
+    including whole files a fix round created - are removed.
+    """
+    _git(["checkout", "--", "."], cwd=path)
+    _git(["clean", "-fdq"], cwd=path)
+
+
 def head_sha(path):
     """Current HEAD sha. Capture this BEFORE committing so the diff you
     classify later is the agent's change and not an empty one."""

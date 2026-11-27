@@ -73,17 +73,17 @@
 
 <h1>Agentic Software Factory — Build Log</h1>
 <p class="sub">A local-LLM code factory: tickets in a SQLite queue → Qwen (RTX 3090s, llama.cpp) writes code in an isolated git worktree → gates + dual-OS CI check it → PR opens → human merges. <b>$0 real spend</b> — the dollar figures are API-equivalent cost of the local tokens.</p>
-<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-19 10:16 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
+<p class="updated">Repo: <a href="https://github.com/yongsheng-bit/agentic-factory">yongsheng-bit/agentic-factory</a> · Last updated: <b>2026-11-26 23:15 EST</b> · Maintained by Hermes — see <a href="#update">how this log is updated</a>.</p>
 
 <div class="stats">
-  <div class="stat"><b>46</b><span>tickets (3 repos)</span></div>
-  <div class="stat"><b class="ok">23</b><span>merged</span></div>
-  <div class="stat"><b>33</b><span>PRs (23 merged)</span></div>
-  <div class="stat"><b>118</b><span>agent runs</span></div>
-  <div class="stat"><b>73</b><span>commits</span></div>
-  <div class="stat"><b>226</b><span>tests green</span></div>
-  <div class="stat"><b>$9.80</b><span>shadow spend</span></div>
-  <div class="stat"><b class="ok">0</b><span>blocked</span></div>
+  <div class="stat"><b>140</b><span>tickets (4 repos)</span></div>
+  <div class="stat"><b class="ok">117</b><span>merged</span></div>
+  <div class="stat"><b>35</b><span>PRs (33 merged)</span></div>
+  <div class="stat"><b>377</b><span>agent runs</span></div>
+  <div class="stat"><b>97</b><span>commits</span></div>
+  <div class="stat"><b>342</b><span>tests green</span></div>
+  <div class="stat"><b>$66.78</b><span>shadow spend</span></div>
+  <div class="stat"><b class="ok">7</b><span>waiting on human</span></div>
 </div>
 
 <h2 id="update">How this log is kept current</h2>
@@ -121,6 +121,7 @@
 <tr><td><b>Nov 19 · trust layer</b></td><td>Two upgrades aimed at the stack's two honest caveats. <b>Mutation gate</b> (<code>factory/mutate.py</code>): after the suite passes, the diff's added lines are mechanically broken (comparison swaps, boolean flips, constant bumps, and↔or via <code>ast</code>) and the suite re-run per mutant — a suite that stays green while the code gets wrong does not constrain it, and the gate retries with the surviving lines named; the kill score rides in the PR body. First live run on the real parser diff: <b>7/12 killed</b>, exposing five under-tested lines in the GRAND TOTALS exclusion guard. <b>Golden canary</b> (<code>factory/canary.py</code>, <code>factory canary</code>): runs the merged parser against David's real receipts and diffs every row against the hand-verified <code>scan.csv</code> — 2574 truth rows over 99 dates. It immediately told us the honest truth: <b>0 rows reproduced, because every real receipt is a scanned image with no text layer</b> — the canary is now the acceptance gate for the OCR chain (tickets 8 + 14), and "suite green" and "works on my station's paper" are finally separate, separately-checked claims. Real data is read locally and never written; no real-data path enters the product repo. A build-time mutant bug (shared AST tree made mutants accumulate) was caught by the new tests before shipping.</td></tr>
 <tr><td><b>Nov 19 · diagram gap close</b></td><td>Benchmarked against the reference "Agentic Software Factory" diagram and closed its three missing boxes in the harness: <b>Refinement pre-flight</b> (<code>factory/refine.py</code> — backticked symbols in a ticket must exist in the repo or be named by a sibling ticket; duplicate-title check; one LLM solvability pass; failures go to <code>needs_info</code> with zero attempts burned, <code>factory retry</code> revives them), <b>AI Reviewer</b> (<code>factory/review.py</code> — one LLM pass over the diff before the PR opens; verdict + notes render into the PR body; never blocks), and <b>AGENTS.md injection</b> (<code>repo_rules()</code> under <code>## Repo rules</code>, 8000-char cap — closes #51). First live review caught a mismatched diff as <em>concerns</em> and correctly approved the real ticket 10/11 diffs. 220 tests green.</td></tr>
 <tr><td><b>Nov 19 · dashboard delivered</b></td><td><b>petro-dashboard complete: 13/13 tickets merged</b> — filterable index, vanilla-JS row filtering, per-date summary, ISO-week rollup, Chromium e2e proofs, all green on real Chromium in CI. The acceptance test that mattered ran last: the CLI against David's <em>real</em> <code>scan.csv</code> — and it failed twice where 100+ green tests could not: the POS export carries a <b>UTF-8 BOM</b>, and the real schema is <b>5 columns with empty dollars</b> (synthetic fixtures had 4). Two more tickets (utf-8-sig, dispenser column) shipped the fix; 2574 real rows now render end to end. Along the way the factory fixed two of its own bugs: the <b>mutation gate was mutating test files</b> (a test cannot kill mutants of itself — test-only tickets scored an impossible 0/12; tests are the weapon, never the target) and <b>worktrees branched from a stale local clone</b>, so every ticket re-implemented modules already merged on GitHub and every PR conflicted (see P4).</td></tr>
+<tr><td><b>Nov 26 · Ras Mic port</b></td><td>Compared the factory against Michael ("Ras Mic") Yang's published 4-step agentic workflow (Peter Yang's channel) and ported its three genuinely-missing organs. <b>GUI walkthrough video</b>: with <code>preview.video</code> the same Chromium session that screenshots now records a webm of every page loading, attached to the PR next to the stills — a screenshot proves pixels, a video proves the interaction and the load; a video failure retries screenshots-only and never costs the ticket. <b>Unslop pass</b> (<code>factory/unslop.py</code>): between the test gate and the mutation gate, the engine proposes up to 8 <em>exact-match</em> deletions/replacements of mechanical slop (dead code, unused imports, duplicated literals — never <code>tests/</code>, never behavior); edits apply mechanically and survive only if the suite stays green, otherwise everything is discarded; the PR body lists what was removed. <b>Judge loop</b>: the AI reviewer now returns a 1–5 merge-readiness score (his Grap-loop shape), and on <code>concerns</code> runs capped fix rounds — notes fed back to the agent, suite re-run, re-review — signal only, never in the merge path; the review section may name a different engine than the writer, and that independence is the point. 342 tests green, including the negative control that caught P18 before it shipped.</td></tr>
 </table>
 
 <h2 id="incidents">Incident log — what broke and what it taught us</h2>
@@ -268,6 +269,14 @@
 <p><span class="lbl">Root cause</span> The pre-PR gates checked the diff's <em>shape</em> (empty, junk, secrets, blast radius) but never <em>ran</em> anything. The agent's <code>finish()</code> is a claim, and the claim was false: it wrote tests and an implementation that disagreed, and nothing between the last edit and <code>git push</code> noticed.</p>
 <p><span class="lbl">Fix</span> A <b>test gate</b>: <code>gates.run_tests()</code> executes the repo's configured <code>gates.test_command</code> in the worktree (with the agent's env overlay, so the pinned venv is used) before a PR opens. Failure = retry with the last 1,500 chars of output injected into the next attempt's "Previous failure" prompt; exhausted retries escalate. All three PRs were closed and their tickets re-queued with the exact assertion failures as context.</p>
 <p><span class="lbl">Lesson</span> CI caught all three — the layered chain worked — but catching a false claim at CI costs a branch, a PR, and a human's glance. Run the cheapest decisive check at the cheapest point. And the flagged weak point ("the agent writes the tests its own code is judged by") is now mechanically bounded: the tests may be wrong, but they can no longer be <em>red</em>.</p>
+</div>
+
+<div class="incident">
+<h4>P18 · The unslop pass diffed against the engine URL <span class="tag pipe">pipeline</span></h4>
+<p><span class="lbl">Symptom</span> Caught by its own test before shipping: <code>unslop.clean()</code> returned the diff measured against <code>http://192.168.68.73:8080/v1</code> — a git ref that does not exist.</p>
+<p><span class="lbl">Root cause</span> Tuple-unpack clobbered a parameter: <code>_, base, model = engine_from_cfg(...)</code> overwrote the function's own <code>base</code> argument (the pre-agent SHA the final diff must be measured against). Every other path in the function looked right; only the last line was poisoned.</p>
+<p><span class="lbl">Fix</span> Renamed the unpack targets (<code>scfg, engine_base, model</code>) and added a regression test that captures the <code>base</code> kwarg reaching <code>diff_text()</code> — verified by negative control: with the bug re-injected, exactly that test fails.</p>
+<p><span class="lbl">Lesson</span> Never unpack into a name a parameter already owns; and a test earns belief only after you watch it fail on the bug it exists to catch.</p>
 </div>
 
 <h3>Agent behavior</h3>

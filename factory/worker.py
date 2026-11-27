@@ -15,7 +15,8 @@ from . import agent as agentmod
 from . import blast as blastmod
 from . import db as dbmod
 from . import gates, mutate, notify, preview as previewmod
-from . import refine as refinemod, review as reviewmod, worktree as wt
+from . import refine as refinemod, review as reviewmod, unslop as unslopmod
+from . import worktree as wt
 
 try:
     import msvcrt
@@ -269,6 +270,15 @@ def _process_once(cfg, con, dry=False):
                 dbmod.finish(con, ticket["id"], "queued")
                 return "retry (tests failing)"
 
+        unslop_applied = []
+        if (cfg.get("unslop") or {}).get("enabled") and test_cmd:
+            diff_text, unslop_applied = unslopmod.clean(
+                cfg, ticket, path, diff_text, test_cmd,
+                env=agentmod.minimal_env(
+                    env_extra=(cfg.get("agent") or {}).get("env")),
+                base=base_sha)
+            print("unslop: %d edits kept" % len(unslop_applied), flush=True)
+
         mut_report = ""
         mut_cfg = (cfg.get("gates") or {}).get("mutation") or {}
         if test_cmd and mut_cfg.get("enabled"):
@@ -288,6 +298,53 @@ def _process_once(cfg, con, dry=False):
                 return "retry (tests do not constrain the code)"
 
 
+        verdict, notes, score = reviewmod.review_diff(cfg, ticket, diff_text)
+        loop_cfg = (cfg.get("review") or {}).get("loop") or {}
+        judge_rounds = 0
+        while (verdict == "concerns" and loop_cfg.get("enabled")
+               and test_cmd
+               and judge_rounds < int(loop_cfg.get("max_rounds", 1))):
+            judge_rounds += 1
+            fix_prompt = agentmod.write_prompt(
+                path, ticket, "%s-fix%d" % (attempt, judge_rounds),
+                extra="AI code review flagged these concerns on the "
+                      "current work; fix exactly these and nothing "
+                      "else:\n" + notes)
+            fix_run = dbmod.start_run(con, ticket["id"], attempt, tier=tier,
+                                      tier_reason="judge round %d"
+                                      % judge_rounds)
+            res_fix = agentmod.run(cfg, spec, ticket["title"], path,
+                                   prompt_path=fix_prompt)
+            dbmod.end_run(con, fix_run, res_fix["status"],
+                          res_fix.get("cost_usd", 0.0),
+                          (res_fix.get("stderr")
+                           or res_fix.get("stdout") or "")[:2000])
+            print(f"[ticket {ticket['id']}] judge round {judge_rounds}: "
+                  f"{res_fix['status']}", flush=True)
+            if res_fix["status"] != "ok":
+                break
+            ok, _out = gates.run_tests(
+                path, test_cmd,
+                env=agentmod.minimal_env(
+                    env_extra=(cfg.get("agent") or {}).get("env")),
+                cfg=cfg)
+            new_diff = wt.diff_text(path, base=base_sha)
+            if (not ok or not new_diff.strip()
+                    or "tests/test_harness.py" in new_diff
+                    or "Binary files" in new_diff):
+                wt.discard(path)
+                break
+            if not wt.commit_all(
+                    path,
+                    "%s: address review concerns (judge round %d)"
+                    % (ticket["ref"] or "ticket " + str(ticket["id"]),
+                       judge_rounds)):
+                wt.discard(path)
+                break
+            diff_text = new_diff
+            verdict, notes, score = reviewmod.review_diff(cfg, ticket,
+                                                          diff_text)
+
         nfiles, added, deleted = wt.diff_stat(path, base=base_sha)
         if nfiles == 0 or not diff_text.strip():
 
@@ -298,8 +355,6 @@ def _process_once(cfg, con, dry=False):
             added, deleted, diff_text,
             cfg=cfg.get("blast"))
         dbmod.set_blast(con, ticket["id"], level, reason, branch=branch)
-
-        verdict, notes = reviewmod.review_diff(cfg, ticket, diff_text)
 
         body = (f"{ticket['body']}\n\n---\n"
                 f"blast radius: **{level}** ({reason})\n"
@@ -324,10 +379,23 @@ def _process_once(cfg, con, dry=False):
             body += f"\nCloses #{ticket['issue_number']}\n"
 
         if verdict:
-            body += f"\nAI review: **{verdict}** — {notes}\n"
+            score_txt = " %d/5" % score if score else ""
+            body += f"\nAI review: **{verdict}**{score_txt} — {notes}\n"
         else:
             body += f"\nAI review: unavailable ({notes})\n"
-        print(f"ai review: {verdict or notes}", flush=True)
+        if judge_rounds:
+            body += ("\nJudge loop: %d fix round(s) ran; the mutation gate "
+                     "judged the pre-fix diff.\n" % judge_rounds)
+        if unslop_applied:
+            body += ("\n## Unslop\n"
+                     + "\n".join(
+                           "- `%s`: %d chars removed"
+                           % (e["file"],
+                              max(0, len(e["find"]) - len(e["replace"])))
+                           for e in unslop_applied)
+                     + "\nSuite re-ran green after the cleanup.\n")
+        print(f"ai review: {verdict or notes}"
+              + (" score=%s" % score if score else ""), flush=True)
 
         pr_url = None
         if cfg.get("push", True):
